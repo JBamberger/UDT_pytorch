@@ -14,7 +14,7 @@ parse.add_argument('-p', '--padding', dest='padding', default=2, type=float, hel
 
 args = parse.parse_args()
 
-print args
+print(args)
 
 
 def crop_hwc(image, bbox, out_sz, padding=(0, 0, 0)):
@@ -77,8 +77,8 @@ template_id = np.where(lmdb['up_index'] > 1)[0]  # NEVER use the last frame as t
 rand_split = np.random.choice(len(template_id), len(template_id))
 lmdb['train_set'] = template_id[rand_split[:(len(template_id)-num_val)]]
 lmdb['val_set'] = template_id[rand_split[(len(template_id)-num_val):]]
-print len(lmdb['train_set'])
-print len(lmdb['val_set'])
+print(len(lmdb['train_set']))
+print(len(lmdb['val_set']))
 
 # to list for json
 lmdb['train_set'] = lmdb['train_set'].tolist()

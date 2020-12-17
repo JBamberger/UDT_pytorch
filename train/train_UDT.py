@@ -38,7 +38,7 @@ parser.add_argument('--save', '-s', default='./work', type=str, help='directory 
 
 args = parser.parse_args()
 
-print args
+print(args)
 best_loss = 1e6
 
 
