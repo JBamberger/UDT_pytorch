@@ -61,7 +61,8 @@ class DCFNetTraker(object):
         target = patch - config.net_average_image
         self.net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda())
         self.target_pos, self.target_sz = target_pos, target_sz
-        self.patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)  # buff
+        self.patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]),
+                                   np.float32)  # buff
 
     def track(self, im):
         for i in range(self.config.num_scale):  # crop multi-scale search region

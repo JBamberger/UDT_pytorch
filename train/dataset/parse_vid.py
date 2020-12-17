@@ -45,4 +45,3 @@ print('save json (raw vid info), please wait 1 min~')
 print('total frame number: {:d}'.format(total_frame))
 json.dump(vid, open('vid.json', 'w'), indent=2)
 print('done!')
-

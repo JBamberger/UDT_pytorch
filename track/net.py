@@ -63,7 +63,7 @@ class DCFNet(nn.Module):
     def load_param(self, path='param.pth'):
         checkpoint = torch.load(path)
         if 'state_dict' in checkpoint.keys():  # from training result
-            state_dict = checkpoint['state_dict'] 
+            state_dict = checkpoint['state_dict']
             if 'module' in state_dict.keys()[0]:  # train with nn.DataParallel
                 from collections import OrderedDict
                 new_state_dict = OrderedDict()
@@ -89,10 +89,12 @@ if __name__ == '__main__':
             print(param.size())
     from scipy import io
     import numpy as np
+
     p = io.loadmat('net_param.mat')
-    x = p['res'][0][0][:,:,::-1].copy()
+    x = p['res'][0][0][:, :, ::-1].copy()
     x_out = p['res'][0][-1]
     from collections import OrderedDict
+
     pth_state_dict = OrderedDict()
 
     match_dict = dict()
@@ -106,7 +108,7 @@ if __name__ == '__main__':
         key_in_model = match_dict[var_name]
         param_in_model = var_name.rsplit('.', 1)[1]
         if 'weight' in var_name:
-            pth_state_dict[var_name] = torch.Tensor(np.transpose(p[key_in_model],(3,2,0,1)))
+            pth_state_dict[var_name] = torch.Tensor(np.transpose(p[key_in_model], (3, 2, 0, 1)))
         elif 'bias' in var_name:
             pth_state_dict[var_name] = torch.Tensor(np.squeeze(p[key_in_model]))
         if var_name == 'feature.0.weight':
@@ -114,16 +116,12 @@ if __name__ == '__main__':
             weight = weight[:, ::-1, :, :].copy()  # cv2 bgr input
             pth_state_dict[var_name] = torch.Tensor(weight)
 
-
     torch.save(pth_state_dict, 'param.pth')
     net.load_state_dict(torch.load('param.pth'))
-    x_t = torch.Tensor(np.expand_dims(np.transpose(x,(2,0,1)), axis=0))
+    x_t = torch.Tensor(np.expand_dims(np.transpose(x, (2, 0, 1)), axis=0))
     x_pred = net(x_t).data.numpy()
-    pred_error = np.sum(np.abs(np.transpose(x_pred,(0,2,3,1)).reshape(-1) - x_out.reshape(-1)))
+    pred_error = np.sum(np.abs(np.transpose(x_pred, (0, 2, 3, 1)).reshape(-1) - x_out.reshape(-1)))
 
     x_fft = torch.rfft(x_t, signal_ndim=2, onesided=False)
 
-
     print('model_transfer_error:{:.5f}'.format(pred_error))
-
-

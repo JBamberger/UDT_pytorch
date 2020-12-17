@@ -19,8 +19,8 @@ print(args)
 
 def crop_hwc(image, bbox, out_sz, padding=(0, 0, 0)):
     bbox = [float(x) for x in bbox]
-    a = (out_sz-1) / (bbox[2]-bbox[0])
-    b = (out_sz-1) / (bbox[3]-bbox[1])
+    a = (out_sz - 1) / (bbox[2] - bbox[0])
+    b = (out_sz - 1) / (bbox[3] - bbox[1])
     c = -a * bbox[0]
     d = -b * bbox[1]
     mapping = np.array([[a, 0, c],
@@ -31,6 +31,7 @@ def crop_hwc(image, bbox, out_sz, padding=(0, 0, 0)):
 
 def cxy_wh_2_bbox(cxy, wh):
     return np.array([cxy[0] - wh[0] / 2, cxy[1] - wh[1] / 2, cxy[0] + wh[0] / 2, cxy[1] + wh[1] / 2])  # 0-index
+
 
 vid = json.load(open('vid.json', 'r'))
 
@@ -49,16 +50,16 @@ count = 0
 begin_time = time.time()
 for subset in vid:
     for video in subset:
-    	frames = video['frame']
-    	n_frames = len(frames)
-    	for f, frame in enumerate(frames):
+        frames = video['frame']
+        n_frames = len(frames)
+        for f, frame in enumerate(frames):
             img_path = join(video['base_path'], frame['img_path'])
             im = cv2.imread(img_path)
             avg_chans = np.mean(im, axis=(0, 1))
             img_sz = frame['frame_sz']
-       
-            target_pos = [img_sz[0]/2, img_sz[1]/2]
-            target_sz = [img_sz[0]/6, img_sz[1]/6]
+
+            target_pos = [img_sz[0] / 2, img_sz[1] / 2]
+            target_sz = [img_sz[0] / 6, img_sz[1] / 6]
             window_sz = np.array(target_sz) * (1 + args.padding)
             crop_bbox = cxy_wh_2_bbox(target_pos, window_sz)
             patch = crop_hwc(im, crop_bbox, args.output_size)
@@ -69,14 +70,14 @@ for subset in vid:
             lmdb['up_index'][count] = n_frames - f
             count += 1
             if count % 100 == 0:
-               elapsed = time.time() - begin_time
-               print("Processed {} images in {:.2f} seconds. "
+                elapsed = time.time() - begin_time
+                print("Processed {} images in {:.2f} seconds. "
                       "{:.2f} images/second.".format(count, elapsed, count / elapsed))
 
 template_id = np.where(lmdb['up_index'] > 1)[0]  # NEVER use the last frame as template! I do not like bidirectional.
 rand_split = np.random.choice(len(template_id), len(template_id))
-lmdb['train_set'] = template_id[rand_split[:(len(template_id)-num_val)]]
-lmdb['val_set'] = template_id[rand_split[(len(template_id)-num_val):]]
+lmdb['train_set'] = template_id[rand_split[:(len(template_id) - num_val)]]
+lmdb['val_set'] = template_id[rand_split[(len(template_id) - num_val):]]
 print(len(lmdb['train_set']))
 print(len(lmdb['val_set']))
 

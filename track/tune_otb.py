@@ -20,9 +20,9 @@ def tune_otb(param):
     # save result
     benchmark_result_path = join('result', param['dataset'])
     tracker_path = join(benchmark_result_path, (param['network_name'] +
-                        '_scale_step_{:.3f}'.format(param['config'].scale_step) +
-                        '_scale_penalty_{:.3f}'.format(param['config'].scale_penalty) +
-                        '_interp_factor_{:.3f}'.format(param['config'].interp_factor)))
+                                                '_scale_step_{:.3f}'.format(param['config'].scale_step) +
+                                                '_scale_penalty_{:.3f}'.format(param['config'].scale_penalty) +
+                                                '_interp_factor_{:.3f}'.format(param['config'].interp_factor)))
     result_path = join(tracker_path, '{:s}.txt'.format(param['video']))
     if isfile(result_path):
         return
@@ -47,7 +47,8 @@ def tune_otb(param):
         if args.visualization:  # visualization (skip lost frame)
             if f == 0: cv2.destroyAllWindows()
             location = [int(l) for l in location]  # int
-            cv2.rectangle(im, (location[0], location[1]), (location[0] + location[2], location[1] + location[3]), (0, 255, 255), 3)
+            cv2.rectangle(im, (location[0], location[1]), (location[0] + location[2], location[1] + location[3]),
+                          (0, 255, 255), 3)
             cv2.putText(im, str(f), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
 
             cv2.imshow(video, im)
@@ -55,16 +56,16 @@ def tune_otb(param):
     toc /= cv2.getTickFrequency()
     print('{:2d} Video: {:12s} Time: {:2.1f}s Speed: {:3.1f}fps'.format(v, video, toc, f / toc))
     regions = np.array(regions)
-    regions[:,:2] += 1  # 1-index
+    regions[:, :2] += 1  # 1-index
     with open(result_path, 'w') as f:
         for x in regions:
             f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')
 
 
-params = {'dataset':['OTB2013'], 'network':['param.pth'],
-          'scale_step':np.arange(1.01, 1.05, 0.005, np.float32),
-          'scale_penalty':np.arange(0.98, 1.0, 0.025, np.float32),
-          'interp_factor':np.arange(0.001, 0.015, 0.001, np.float32)}
+params = {'dataset': ['OTB2013'], 'network': ['param.pth'],
+          'scale_step': np.arange(1.01, 1.05, 0.005, np.float32),
+          'scale_penalty': np.arange(0.98, 1.0, 0.025, np.float32),
+          'interp_factor': np.arange(0.001, 0.015, 0.001, np.float32)}
 
 p = dict()
 p['config'] = TrackerConfig()
@@ -73,7 +74,7 @@ for network in params['network']:
     np.random.shuffle(params['dataset'])
     for dataset in params['dataset']:
         base_path = join('dataset', dataset)
-        json_path = join('dataset', dataset+'.json')
+        json_path = join('dataset', dataset + '.json')
         annos = json.load(open(json_path, 'r'))
         videos = annos.keys()
         p['dataset'] = dataset
@@ -84,7 +85,7 @@ for network in params['network']:
             video_path_name = annos[video]['name']
             init_rect = np.array(annos[video]['init_rect']).astype(np.float)
             image_files = [join(base_path, video_path_name, 'img', im_f) for im_f in annos[video]['image_files']]
-            target_pos = np.array([init_rect[0] + init_rect[2] / 2 -1 , init_rect[1] + init_rect[3] / 2 -1])  # 0-index
+            target_pos = np.array([init_rect[0] + init_rect[2] / 2 - 1, init_rect[1] + init_rect[3] / 2 - 1])  # 0-index
             target_sz = np.array([init_rect[2], init_rect[3]])
             ims = []
             for image_file in image_files:
