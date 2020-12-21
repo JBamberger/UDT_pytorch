@@ -1,0 +1,5 @@
+/.idea
+*.iml
+/venv
+train/dataset/crop_125_2.0/*
+train/dataset/*.json
