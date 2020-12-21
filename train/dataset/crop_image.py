@@ -7,6 +7,8 @@ import cv2
 import time
 import pdb
 
+from tqdm import tqdm
+
 parse = argparse.ArgumentParser(description='Generate training data (cropped) for DCFNet_pytorch')
 parse.add_argument('-v', '--visual', dest='visual', action='store_true', help='whether visualise crop')
 parse.add_argument('-o', '--output_size', dest='output_size', default=125, type=int, help='crop output size')
@@ -47,8 +49,13 @@ if not isdir(crop_base_path):
     mkdir(crop_base_path)
 
 count = 0
-begin_time = time.time()
+# begin_time = time.time()
 for subset in vid:
+    total = 0
+    for v in subset:
+        total += len(v['frame'])
+
+    progress = tqdm(total=total)
     for video in subset:
         frames = video['frame']
         n_frames = len(frames)
@@ -69,10 +76,11 @@ for subset in vid:
             lmdb['down_index'][count] = f
             lmdb['up_index'][count] = n_frames - f
             count += 1
-            if count % 100 == 0:
-                elapsed = time.time() - begin_time
-                print("Processed {} images in {:.2f} seconds. "
-                      "{:.2f} images/second.".format(count, elapsed, count / elapsed))
+            progress.update()
+            # if count % 100 == 0:
+            #     elapsed = time.time() - begin_time
+            #     print("Processed {} images in {:.2f} seconds. "
+            #           "{:.2f} images/second.".format(count, elapsed, count / elapsed))
 
 template_id = np.where(lmdb['up_index'] > 1)[0]  # NEVER use the last frame as template! I do not like bidirectional.
 rand_split = np.random.choice(len(template_id), len(template_id))
