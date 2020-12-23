@@ -11,10 +11,11 @@ import torch.backends.cudnn as cudnn
 import torch.nn as nn
 from torch.utils.data import dataloader
 
-from dataset import VID
-from net import DCFNet
+from dataset import ILSVRC2015
+from DCFNet import DCFNet
 import config
-from track import util
+import util
+from util import AverageMeter
 
 parser = argparse.ArgumentParser(description='Training DCFNet in Pytorch 0.4.0')
 parser.add_argument('--input_sz', dest='input_sz', default=125, type=int, help='crop input size')
@@ -65,8 +66,11 @@ class TrackerConfig(object):
     output_sigma_factor = 0.1
 
     output_sigma = crop_sz / (1 + padding) * output_sigma_factor
+
     y = util.gaussian_shaped_labels(output_sigma, [output_sz, output_sz]).astype(np.float32)
+
     yf = torch.rfft(torch.Tensor(y).view(1, 1, output_sz, output_sz).cuda(), signal_ndim=2)
+
     # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
 
 
@@ -108,18 +112,18 @@ if args.resume:
 cudnn.benchmark = True
 
 # training data
-crop_base_path = os.path.join(config.dataset_root, 'ILSVRC2015', f'crop_{args.input_sz:d}_{args.padding:1.1f}')
-if not isdir(crop_base_path):
-    print(f'please run gen_training_data.py --output_size {args.input_sz:d} --padding {args.padding:.1f}!')
-    exit()
+# crop_base_path = os.path.join(config.dataset_root, 'ILSVRC2015', f'crop_{args.input_sz:d}_{args.padding:1.1f}')
+# if not isdir(crop_base_path):
+#     print(f'please run gen_training_data.py --output_size {args.input_sz:d} --padding {args.padding:.1f}!')
+#     exit()
 
 save_path = args.save if args.save else config.checkpoint_root
 save_path = os.path.join(save_path, f'crop_{args.input_sz:d}_{args.padding:1.1f}')
 if not isdir(save_path):
     makedirs(save_path)
 
-train_dataset = VID(root=crop_base_path, train=True, range=args.range)
-val_dataset = VID(root=crop_base_path, train=False, range=args.range)
+train_dataset = ILSVRC2015(train=True, range=args.range)
+val_dataset = ILSVRC2015(train=False, range=args.range)
 
 train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=args.batch_size * gpu_num, shuffle=True,
@@ -136,25 +140,6 @@ def adjust_learning_rate(optimizer, epoch):
         param_group['lr'] = lr
 
 
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
 def save_checkpoint(state, is_best, filename=join(save_path, 'checkpoint.pth.tar')):
     torch.save(state, filename)
     if is_best:
@@ -168,7 +153,9 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     # switch to train mode
     model.train()
+
     label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1, 1).cuda(non_blocking=True)
+
     initial_y = tracker_config.y.copy()
 
     end = time.time()

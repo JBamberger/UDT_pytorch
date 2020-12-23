@@ -68,7 +68,9 @@ def main():
                         logf.write(out_path)
                         logf.write('\n')
 
+                    # how many frames to the first frame
                     lmdb['down_index'][count] = f
+                    # how many frames to the last frame
                     lmdb['up_index'][count] = n_frames - f
                     count += 1
                     progress.update()

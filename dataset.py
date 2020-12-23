@@ -9,8 +9,11 @@ import numpy as np
 import config
 
 
-class VID(data.Dataset):
+class ILSVRC2015(data.Dataset):
     def __init__(self, file=None, root=None, range=10, train=True):
+        """
+        range: number of frames to select search templates from
+        """
 
         if file is None:
             file = os.path.join(config.dataset_root, 'ILSVRC2015', 'dataset.json')
@@ -22,27 +25,34 @@ class VID(data.Dataset):
         self.root = root
         self.range = range
         self.train = train
-        self.mean = np.expand_dims(np.expand_dims(np.array([109, 120, 119]), axis=1), axis=1).astype(np.float32)
+        self.mean = np.array([109, 120, 119], dtype=np.float32).reshape([3, 1, 1])
+
+    def _load_frame(self, index: int):
+        img = cv2.imread(join(self.root, f'{index:08d}.jpg'))
+        # TODO: Frames are not converted to RGB and range 0-1 or -0.5, 0.5. Is this an error or is there a reason?
+        # Bring color axis to front. Shape is c, h, w
+        return np.transpose(img, (2, 0, 1)).astype(np.float32) - self.mean
 
     def __getitem__(self, item):
+        """
+        output shapes:
+        3 x h x w
+        """
         if self.train:
             target_id = self.imdb['train_set'][item]
         else:
             target_id = self.imdb['val_set'][item]
 
         # range_down = self.imdb['down_index'][target_id]
-        range_up = self.imdb['up_index'][target_id]
         # search_id = np.random.randint(-min(range_down, self.range), min(range_up, self.range)) + target_id
+
+        range_up = self.imdb['up_index'][target_id]
         search_id1 = np.random.randint(1, min(range_up, self.range + 1)) + target_id
         search_id2 = np.random.randint(1, min(range_up, self.range + 1)) + target_id
 
-        target = cv2.imread(join(self.root, '{:08d}.jpg'.format(target_id)))
-        search1 = cv2.imread(join(self.root, '{:08d}.jpg'.format(search_id1)))
-        search2 = cv2.imread(join(self.root, '{:08d}.jpg'.format(search_id2)))
-
-        target = np.transpose(target, (2, 0, 1)).astype(np.float32) - self.mean
-        search1 = np.transpose(search1, (2, 0, 1)).astype(np.float32) - self.mean
-        search2 = np.transpose(search2, (2, 0, 1)).astype(np.float32) - self.mean
+        target = self._load_frame(target_id)
+        search1 = self._load_frame(search_id1)
+        search2 = self._load_frame(search_id2)
 
         return target, search1, search2
 
@@ -57,13 +67,13 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
 
-    data = VID(train=True)
+    data = ILSVRC2015(train=True)
     n = len(data)
     fig = plt.figure(1)
     ax = fig.add_axes([0, 0, 1, 1])
 
     for i in range(n):
-        z, x = data[i]
+        z, x, _ = data[i]
         z, x = np.transpose(z, (1, 2, 0)).astype(np.uint8), np.transpose(x, (1, 2, 0)).astype(np.uint8)
         zx = np.concatenate((z, x), axis=1)
 

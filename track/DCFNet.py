@@ -1,33 +1,7 @@
 import torch.nn as nn
 import torch  # pytorch 0.4.0! fft
-import numpy as np
-import cv2
-
-
-def complex_mul(x, z):
-    out_real = x[..., 0] * z[..., 0] - x[..., 1] * z[..., 1]
-    out_imag = x[..., 0] * z[..., 1] + x[..., 1] * z[..., 0]
-    return torch.stack((out_real, out_imag), -1)
-
-
-def complex_mulconj(x, z):
-    out_real = x[..., 0] * z[..., 0] + x[..., 1] * z[..., 1]
-    out_imag = x[..., 1] * z[..., 0] - x[..., 0] * z[..., 1]
-    return torch.stack((out_real, out_imag), -1)
-
-
-class DCFNetFeature(nn.Module):
-    def __init__(self):
-        super(DCFNetFeature, self).__init__()
-        self.feature = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, 3, padding=1),
-            nn.LocalResponseNorm(size=5, alpha=0.0001, beta=0.75, k=1),
-        )
-
-    def forward(self, x):
-        return self.feature(x)
+import complex_numbers as cn
+from track.DCFNetFeature import DCFNetFeature
 
 
 class DCFNet(nn.Module):
@@ -41,8 +15,8 @@ class DCFNet(nn.Module):
     def forward(self, x):
         x = self.feature(x) * self.config.cos_window
         xf = torch.rfft(x, signal_ndim=2)
-        kxzf = torch.sum(complex_mulconj(xf, self.model_zf), dim=1, keepdim=True)
-        response = torch.irfft(complex_mul(kxzf, self.model_alphaf), signal_ndim=2)
+        kxzf = torch.sum(cn.mulconj(xf, self.model_zf), dim=1, keepdim=True)
+        response = torch.irfft(cn.mul(kxzf, self.model_alphaf), signal_ndim=2)
         # r_max = torch.max(response)
         # cv2.imshow('response', response[0, 0].data.cpu().numpy())
         # cv2.waitKey(0)

@@ -1,12 +1,13 @@
 import argparse
-import cv2
-import numpy as np
+import json
 from os import makedirs
 from os.path import isfile, isdir, join
-from util import cxy_wh_2_rect1
-import torch
-import json
+
+import cv2
+
 from DCFNet import *
+from track.DCFNetTracker import DCFNetTracker
+from track.TrackerConfig import TrackerConfig
 
 parser = argparse.ArgumentParser(description='Tune parameters for DCFNet tracker on OTB2015')
 parser.add_argument('-v', '--visualization', dest='visualization', action='store_true',
@@ -37,7 +38,7 @@ def tune_otb(param):
         tic = cv2.getTickCount()
         if f == 0:  # init
             init_rect = p['init_rect']
-            tracker = DCFNetTraker(ims[f], init_rect, config=param['config'])
+            tracker = DCFNetTracker(ims[f], init_rect, config=param['config'])
             regions.append(init_rect)
         else:  # tracking
             rect = tracker.track(ims[f])
