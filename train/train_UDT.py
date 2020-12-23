@@ -17,34 +17,6 @@ import config
 import util
 from util import AverageMeter
 
-parser = argparse.ArgumentParser(description='Training DCFNet in Pytorch 0.4.0')
-parser.add_argument('--input_sz', dest='input_sz', default=125, type=int, help='crop input size')
-parser.add_argument('--padding', dest='padding', default=2.0, type=float, help='crop padding size')
-parser.add_argument('--range', dest='range', default=10, type=int, help='select range')
-parser.add_argument('--epochs', default=50, type=int, metavar='N',
-                    help='number of total epochs to run')
-parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-                    help='manual epoch number (useful on restarts)')
-parser.add_argument('--print-freq', '-p', default=10, type=int,
-                    metavar='N', help='print frequency (default: 10)')
-parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
-                    help='number of data loading workers (default: 8)')
-parser.add_argument('-b', '--batch-size', default=32, type=int,
-                    metavar='N', help='mini-batch size (default: 32)')
-parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
-                    metavar='LR', help='initial learning rate')
-parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
-                    help='momentum')
-parser.add_argument('--weight-decay', '--wd', default=5e-5, type=float,
-                    metavar='W', help='weight decay (default: 5e-5)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')
-parser.add_argument('--save', '-s', default=None, type=str, help='directory for saving')
-
-args = parser.parse_args()
-
-print(args)
-best_loss = 1e6
-
 
 def output_drop(output, target):
     delta1 = (output - target) ** 2
@@ -74,73 +46,16 @@ class TrackerConfig(object):
     # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
 
 
-tracker_config = TrackerConfig()
-
-model = DCFNet(config=tracker_config)
-model.cuda()
-gpu_num = torch.cuda.device_count()
-print('GPU NUM: {:2d}'.format(gpu_num))
-if gpu_num > 1:
-    model = torch.nn.DataParallel(model, list(range(gpu_num))).cuda()
-
-criterion = nn.MSELoss(size_average=False).cuda()
-
-optimizer = torch.optim.SGD(model.parameters(),
-                            lr=args.lr,
-                            momentum=args.momentum,
-                            weight_decay=args.weight_decay)
-
-target = torch.Tensor(tracker_config.y) \
-    .cuda() \
-    .unsqueeze(0) \
-    .unsqueeze(0) \
-    .repeat(args.batch_size * gpu_num, 1, 1, 1)  # for training
-
-# optionally resume from a checkpoint
-if args.resume:
-    if isfile(args.resume):
-        print(f"=> loading checkpoint '{args.resume}'")
-        checkpoint = torch.load(args.resume)
-        args.start_epoch = checkpoint['epoch']
-        best_loss = checkpoint['best_loss']
-        model.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        print(f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})")
-    else:
-        print("=> no checkpoint found at '{}'".format(args.resume))
-
-cudnn.benchmark = True
-
-# training data
-# crop_base_path = os.path.join(config.dataset_root, 'ILSVRC2015', f'crop_{args.input_sz:d}_{args.padding:1.1f}')
-# if not isdir(crop_base_path):
-#     print(f'please run gen_training_data.py --output_size {args.input_sz:d} --padding {args.padding:.1f}!')
-#     exit()
-
-save_path = args.save if args.save else config.checkpoint_root
-save_path = os.path.join(save_path, f'crop_{args.input_sz:d}_{args.padding:1.1f}')
-if not isdir(save_path):
-    makedirs(save_path)
-
-train_dataset = ILSVRC2015(train=True, range=args.range)
-val_dataset = ILSVRC2015(train=False, range=args.range)
-
-train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=args.batch_size * gpu_num, shuffle=True,
-    num_workers=args.workers, pin_memory=True, drop_last=True)
-
-val_loader = torch.utils.data.DataLoader(
-    val_dataset, batch_size=args.batch_size * gpu_num, shuffle=False,
-    num_workers=args.workers, pin_memory=True, drop_last=True)
-
-
 def adjust_learning_rate(optimizer, epoch):
     lr = np.logspace(-2, -5, num=args.epochs)[epoch]
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
 
-def save_checkpoint(state, is_best, filename=join(save_path, 'checkpoint.pth.tar')):
+def save_checkpoint(state, is_best, filename=None):
+    if filename is None:
+        filename = join(save_path, 'checkpoint.pth.tar')
+
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, join(save_path, 'model_best.pth.tar'))
@@ -314,6 +229,95 @@ def validate(val_loader, model, criterion):
 
     return losses.avg
 
+
+parser = argparse.ArgumentParser(description='Training DCFNet in Pytorch 0.4.0')
+parser.add_argument('--input_sz', dest='input_sz', default=125, type=int, help='crop input size')
+parser.add_argument('--padding', dest='padding', default=2.0, type=float, help='crop padding size')
+parser.add_argument('--range', dest='range', default=10, type=int, help='select range')
+parser.add_argument('--epochs', default=50, type=int, metavar='N',
+                    help='number of total epochs to run')
+parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
+                    help='manual epoch number (useful on restarts)')
+parser.add_argument('--print-freq', '-p', default=10, type=int,
+                    metavar='N', help='print frequency (default: 10)')
+parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
+                    help='number of data loading workers (default: 8)')
+parser.add_argument('-b', '--batch-size', default=32, type=int,
+                    metavar='N', help='mini-batch size (default: 32)')
+parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
+                    metavar='LR', help='initial learning rate')
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                    help='momentum')
+parser.add_argument('--weight-decay', '--wd', default=5e-5, type=float,
+                    metavar='W', help='weight decay (default: 5e-5)')
+parser.add_argument('--resume', default='', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')
+parser.add_argument('--save', '-s', default=None, type=str, help='directory for saving')
+
+args = parser.parse_args()
+
+print(args)
+best_loss = 1e6
+
+tracker_config = TrackerConfig()
+
+model = DCFNet(config=tracker_config)
+model.cuda()
+
+gpu_num = torch.cuda.device_count()
+print('GPU NUM: {:2d}'.format(gpu_num))
+if gpu_num > 1:
+    model = torch.nn.DataParallel(model, list(range(gpu_num))).cuda()
+
+criterion = nn.MSELoss(size_average=False).cuda()
+
+optimizer = torch.optim.SGD(model.parameters(),
+                            lr=args.lr,
+                            momentum=args.momentum,
+                            weight_decay=args.weight_decay)
+
+target = torch.Tensor(tracker_config.y) \
+    .cuda() \
+    .unsqueeze(0) \
+    .unsqueeze(0) \
+    .repeat(args.batch_size * gpu_num, 1, 1, 1)  # for training
+
+# optionally resume from a checkpoint
+if args.resume:
+    if isfile(args.resume):
+        print(f"=> loading checkpoint '{args.resume}'")
+        checkpoint = torch.load(args.resume)
+        args.start_epoch = checkpoint['epoch']
+        best_loss = checkpoint['best_loss']
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        print(f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})")
+    else:
+        print("=> no checkpoint found at '{}'".format(args.resume))
+
+cudnn.benchmark = True
+
+# training data
+# crop_base_path = os.path.join(config.dataset_root, 'ILSVRC2015', f'crop_{args.input_sz:d}_{args.padding:1.1f}')
+# if not isdir(crop_base_path):
+#     print(f'please run gen_training_data.py --output_size {args.input_sz:d} --padding {args.padding:.1f}!')
+#     exit()
+
+save_path = args.save if args.save else config.checkpoint_root
+save_path = os.path.join(save_path, f'crop_{args.input_sz:d}_{args.padding:1.1f}')
+if not isdir(save_path):
+    makedirs(save_path)
+
+# Create training dataset loader
+train_dataset = ILSVRC2015(train=True, range=args.range)
+train_loader = torch.utils.data.DataLoader(
+    train_dataset, batch_size=args.batch_size * gpu_num, shuffle=True,
+    num_workers=args.workers, pin_memory=True, drop_last=True)
+
+# Create validation dataset loader
+val_dataset = ILSVRC2015(train=False, range=args.range)
+val_loader = torch.utils.data.DataLoader(
+    val_dataset, batch_size=args.batch_size * gpu_num, shuffle=False,
+    num_workers=args.workers, pin_memory=True, drop_last=True)
 
 for epoch in range(args.start_epoch, args.epochs):
     adjust_learning_rate(optimizer, epoch)
