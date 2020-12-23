@@ -1,17 +1,20 @@
 import argparse
+import os
 import shutil
-from os.path import join, isdir, isfile
+import time
 from os import makedirs
+from os.path import join, isdir, isfile
+
+import numpy as np
+import torch
+import torch.backends.cudnn as cudnn
+import torch.nn as nn
+from torch.utils.data import dataloader
 
 from dataset import VID
 from net import DCFNet
-import torch
-from torch.utils.data import dataloader
-import torch.nn as nn
-import torch.backends.cudnn as cudnn
-import numpy as np
-import time
-import pdb
+import config
+from track import util
 
 parser = argparse.ArgumentParser(description='Training DCFNet in Pytorch 0.4.0')
 parser.add_argument('--input_sz', dest='input_sz', default=125, type=int, help='crop input size')
@@ -34,22 +37,12 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--weight-decay', '--wd', default=5e-5, type=float,
                     metavar='W', help='weight decay (default: 5e-5)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')
-parser.add_argument('--save', '-s', default='./work', type=str, help='directory for saving')
+parser.add_argument('--save', '-s', default=None, type=str, help='directory for saving')
 
 args = parser.parse_args()
 
 print(args)
 best_loss = 1e6
-
-
-def gaussian_shaped_labels(sigma, sz):
-    x, y = np.meshgrid(np.arange(1, sz[0] + 1) - np.floor(float(sz[0]) / 2),
-                       np.arange(1, sz[1] + 1) - np.floor(float(sz[1]) / 2))
-    d = x ** 2 + y ** 2
-    g = np.exp(-0.5 / (sigma ** 2) * d)
-    g = np.roll(g, int(-np.floor(float(sz[0]) / 2.) + 1), axis=0)
-    g = np.roll(g, int(-np.floor(float(sz[1]) / 2.) + 1), axis=1)
-    return g.astype(np.float32)
 
 
 def output_drop(output, target):
@@ -72,14 +65,14 @@ class TrackerConfig(object):
     output_sigma_factor = 0.1
 
     output_sigma = crop_sz / (1 + padding) * output_sigma_factor
-    y = gaussian_shaped_labels(output_sigma, [output_sz, output_sz])
+    y = util.gaussian_shaped_labels(output_sigma, [output_sz, output_sz]).astype(np.float32)
     yf = torch.rfft(torch.Tensor(y).view(1, 1, output_sz, output_sz).cuda(), signal_ndim=2)
     # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
 
 
-config = TrackerConfig()
+tracker_config = TrackerConfig()
 
-model = DCFNet(config=config)
+model = DCFNet(config=tracker_config)
 model.cuda()
 gpu_num = torch.cuda.device_count()
 print('GPU NUM: {:2d}'.format(gpu_num))
@@ -88,36 +81,40 @@ if gpu_num > 1:
 
 criterion = nn.MSELoss(size_average=False).cuda()
 
-optimizer = torch.optim.SGD(model.parameters(), args.lr,
+optimizer = torch.optim.SGD(model.parameters(),
+                            lr=args.lr,
                             momentum=args.momentum,
                             weight_decay=args.weight_decay)
 
-target = torch.Tensor(config.y).cuda().unsqueeze(0).unsqueeze(0).repeat(args.batch_size * gpu_num, 1, 1,
-                                                                        1)  # for training
+target = torch.Tensor(tracker_config.y) \
+    .cuda() \
+    .unsqueeze(0) \
+    .unsqueeze(0) \
+    .repeat(args.batch_size * gpu_num, 1, 1, 1)  # for training
 
 # optionally resume from a checkpoint
 if args.resume:
     if isfile(args.resume):
-        print("=> loading checkpoint '{}'".format(args.resume))
+        print(f"=> loading checkpoint '{args.resume}'")
         checkpoint = torch.load(args.resume)
         args.start_epoch = checkpoint['epoch']
         best_loss = checkpoint['best_loss']
         model.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
-        print("=> loaded checkpoint '{}' (epoch {})"
-              .format(args.resume, checkpoint['epoch']))
+        print(f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})")
     else:
         print("=> no checkpoint found at '{}'".format(args.resume))
 
 cudnn.benchmark = True
 
 # training data
-crop_base_path = join('dataset', 'crop_{:d}_{:1.1f}'.format(args.input_sz, args.padding))
+crop_base_path = os.path.join(config.dataset_root, 'ILSVRC2015', f'crop_{args.input_sz:d}_{args.padding:1.1f}')
 if not isdir(crop_base_path):
-    print('please run gen_training_data.py --output_size {:d} --padding {:.1f}!'.format(args.input_sz, args.padding))
+    print(f'please run gen_training_data.py --output_size {args.input_sz:d} --padding {args.padding:.1f}!')
     exit()
 
-save_path = join(args.save, 'crop_{:d}_{:1.1f}'.format(args.input_sz, args.padding))
+save_path = args.save if args.save else config.checkpoint_root
+save_path = os.path.join(save_path, f'crop_{args.input_sz:d}_{args.padding:1.1f}')
 if not isdir(save_path):
     makedirs(save_path)
 
@@ -171,8 +168,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     # switch to train mode
     model.train()
-    label = config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1, 1).cuda(non_blocking=True)
-    initial_y = config.y.copy()
+    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1, 1).cuda(non_blocking=True)
+    initial_y = tracker_config.y.copy()
 
     end = time.time()
     for i, (template, search1, search2) in enumerate(train_loader):
@@ -197,14 +194,15 @@ def train(train_loader, model, criterion, optimizer, epoch):
             s1_response = model(template_feat, search1_feat, label)
         # label transform
         peak, index = torch.max(s1_response.view(args.batch_size * gpu_num, -1), 1)
-        r_max, c_max = np.unravel_index(index, [config.output_sz, config.output_sz])
-        fake_y = np.zeros((args.batch_size * gpu_num, 1, config.output_sz, config.output_sz))
+        r_max, c_max = np.unravel_index(index, [tracker_config.output_sz, tracker_config.output_sz])
+        fake_y = np.zeros((args.batch_size * gpu_num, 1, tracker_config.output_sz, tracker_config.output_sz))
         # label shift
         for j in range(args.batch_size * gpu_num):
             shift_y = np.roll(initial_y, r_max[j])
             fake_y[j, ...] = np.roll(shift_y, c_max[j])
         fake_yf = torch.rfft(
-            torch.Tensor(fake_y).view(args.batch_size * gpu_num, 1, config.output_sz, config.output_sz).cuda(),
+            torch.Tensor(fake_y).view(args.batch_size * gpu_num, 1, tracker_config.output_sz,
+                                      tracker_config.output_sz).cuda(),
             signal_ndim=2)
         fake_yf = fake_yf.cuda(non_blocking=True)
 
@@ -212,13 +210,14 @@ def train(train_loader, model, criterion, optimizer, epoch):
         with torch.no_grad():
             s2_response = model(search1_feat, search2_feat, fake_yf)
         peak, index = torch.max(s2_response.view(args.batch_size * gpu_num, -1), 1)
-        r_max, c_max = np.unravel_index(index, [config.output_sz, config.output_sz])
-        fake_y = np.zeros((args.batch_size * gpu_num, 1, config.output_sz, config.output_sz))
+        r_max, c_max = np.unravel_index(index, [tracker_config.output_sz, tracker_config.output_sz])
+        fake_y = np.zeros((args.batch_size * gpu_num, 1, tracker_config.output_sz, tracker_config.output_sz))
         for j in range(args.batch_size * gpu_num):
             shift_y = np.roll(initial_y, r_max[j])
             fake_y[j, ...] = np.roll(shift_y, c_max[j])
         fake_yf = torch.rfft(
-            torch.Tensor(fake_y).view(args.batch_size * gpu_num, 1, config.output_sz, config.output_sz).cuda(),
+            torch.Tensor(fake_y).view(args.batch_size * gpu_num, 1, tracker_config.output_sz,
+                                      tracker_config.output_sz).cuda(),
             signal_ndim=2)
         fake_yf = fake_yf.cuda(non_blocking=True)
 
@@ -255,8 +254,8 @@ def validate(val_loader, model, criterion):
     losses = AverageMeter()
 
     model.eval()
-    initial_y = config.y.copy()
-    label = config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1, 1).cuda(non_blocking=True)
+    initial_y = tracker_config.y.copy()
+    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1, 1).cuda(non_blocking=True)
 
     with torch.no_grad():
         end = time.time()
@@ -281,26 +280,28 @@ def validate(val_loader, model, criterion):
             s1_response = model(template_feat, search1_feat, label)
             # label transform
             peak, index = torch.max(s1_response.view(args.batch_size * gpu_num, -1), 1)
-            r_max, c_max = np.unravel_index(index, [config.output_sz, config.output_sz])
-            fake_y = np.zeros((args.batch_size * gpu_num, 1, config.output_sz, config.output_sz))
+            r_max, c_max = np.unravel_index(index, [tracker_config.output_sz, tracker_config.output_sz])
+            fake_y = np.zeros((args.batch_size * gpu_num, 1, tracker_config.output_sz, tracker_config.output_sz))
             for j in range(args.batch_size * gpu_num):
                 shift_y = np.roll(initial_y, r_max[j])
                 fake_y[j, ...] = np.roll(shift_y, c_max[j])
             fake_yf = torch.rfft(
-                torch.Tensor(fake_y).view(args.batch_size * gpu_num, 1, config.output_sz, config.output_sz).cuda(),
+                torch.Tensor(fake_y).view(args.batch_size * gpu_num, 1, tracker_config.output_sz,
+                                          tracker_config.output_sz).cuda(),
                 signal_ndim=2)
             fake_yf = fake_yf.cuda(non_blocking=True)
 
             # forward tracking 2
             s2_response = model(search1_feat, search2_feat, fake_yf)
             peak, index = torch.max(s2_response.view(args.batch_size * gpu_num, -1), 1)
-            r_max, c_max = np.unravel_index(index, [config.output_sz, config.output_sz])
-            fake_y = np.zeros((args.batch_size * gpu_num, 1, config.output_sz, config.output_sz))
+            r_max, c_max = np.unravel_index(index, [tracker_config.output_sz, tracker_config.output_sz])
+            fake_y = np.zeros((args.batch_size * gpu_num, 1, tracker_config.output_sz, tracker_config.output_sz))
             for j in range(args.batch_size * gpu_num):
                 shift_y = np.roll(initial_y, r_max[j])
                 fake_y[j, ...] = np.roll(shift_y, c_max[j])
             fake_yf = torch.rfft(
-                torch.Tensor(fake_y).view(args.batch_size * gpu_num, 1, config.output_sz, config.output_sz).cuda(),
+                torch.Tensor(fake_y).view(args.batch_size * gpu_num, 1, tracker_config.output_sz,
+                                          tracker_config.output_sz).cuda(),
                 signal_ndim=2)
             fake_yf = fake_yf.cuda(non_blocking=True)
 

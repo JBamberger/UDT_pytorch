@@ -1,12 +1,23 @@
+import os
+
 import torch.utils.data as data
 from os.path import join
 import cv2
 import json
 import numpy as np
 
+import config
+
 
 class VID(data.Dataset):
-    def __init__(self, file='dataset/dataset.json', root='dataset/crop_125_2.0', range=10, train=True):
+    def __init__(self, file=None, root=None, range=10, train=True):
+
+        if file is None:
+            file = os.path.join(config.dataset_root, 'ILSVRC2015', 'dataset.json')
+
+        if root is None:
+            root = os.path.join(config.dataset_root, 'ILSVRC2015', 'crop_125_2.0')
+
         self.imdb = json.load(open(file, 'r'))
         self.root = root
         self.range = range
