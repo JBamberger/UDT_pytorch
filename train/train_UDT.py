@@ -19,17 +19,12 @@ from util import AverageMeter, output_drop
 class TrackerConfig(object):
     crop_sz = 125
     output_sz = 121
-
     lambda0 = 1e-4
     padding = 2.0
     output_sigma_factor = 0.1
-
     output_sigma = crop_sz / (1 + padding) * output_sigma_factor
-
     y = util.gaussian_shaped_labels(output_sigma, [output_sz, output_sz]).astype(np.float32)
-
     yf = torch.rfft(torch.Tensor(y).view(1, 1, output_sz, output_sz).cuda(), signal_ndim=2)
-
     # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
 
 
@@ -48,30 +43,9 @@ def train(train_loader, model, criterion, optimizer, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        template = template.cuda(non_blocking=True)
-        search1 = search1.cuda(non_blocking=True)
-        search2 = search2.cuda(non_blocking=True)
-
-        if gpu_num > 1:
-            template_feat = model.module.feature(template)
-            search1_feat = model.module.feature(search1)
-            search2_feat = model.module.feature(search2)
-        else:
-            template_feat = model.feature(template)
-            search1_feat = model.feature(search1)
-            search2_feat = model.feature(search2)
-
-        # forward tracking 1
-        fake_yf = forward_tracking(model, template_feat, search1_feat, label, initial_y)
-        # forward tracking 2
-        fake_yf = forward_tracking(model, search1_feat, search2_feat, fake_yf, initial_y)
-        # backward tracking
-        output = model(search2_feat, template_feat, fake_yf)
-
-        # the sample dropout is necessary, otherwise we find the loss tends to become unstable
-        output = output_drop(output, target)
+        output = do_tracking(initial_y, label, model, search1, search2, template)
         # consistency loss. target is the initial Gaussian label
-        loss = criterion(output, target) / template.size(0)
+        loss = criterion(output, target) / (args.batch_size * gpu_num)
         # measure accuracy and record loss
         losses.update(loss.item())
 
@@ -93,32 +67,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
                 data_time=data_time, loss=losses))
 
 
-def forward_tracking(model, template, search, label, initial_y):
-    batch_size = args.batch_size * gpu_num
-
-    # compute the model response for the template, search region and label
-    with torch.no_grad():
-        response = model(template, search, label)
-
-    # find the peak location indices in the flattened response maps
-    peak, index = torch.max(response.view(batch_size, -1), 1)
-
-    # convert the indices in the flattened response map to 2D coordinates in the plane
-    r_max, c_max = np.unravel_index(index, [tracker_config.output_sz, tracker_config.output_sz])
-
-    fake_y = np.zeros((batch_size, 1, tracker_config.output_sz, tracker_config.output_sz))
-    for j in range(batch_size):
-        shift_y = np.roll(initial_y, r_max[j])
-        fake_y[j, ...] = np.roll(shift_y, c_max[j])
-
-    fake_yview = torch.Tensor(fake_y) \
-        .view(batch_size, 1, tracker_config.output_sz, tracker_config.output_sz) \
-        .cuda()
-
-    fake_yf = torch.rfft(fake_yview, signal_ndim=2)
-    return fake_yf.cuda(non_blocking=True)
-
-
 def validate(val_loader, model, criterion):
     batch_time = AverageMeter()
     losses = AverageMeter()
@@ -131,29 +79,7 @@ def validate(val_loader, model, criterion):
         end = time.time()
         for i, (template, search1, search2) in enumerate(val_loader):
 
-            # compute output
-            template = template.cuda(non_blocking=True)
-            search1 = search1.cuda(non_blocking=True)
-            search2 = search2.cuda(non_blocking=True)
-
-            if gpu_num > 1:
-                template_feat = model.module.feature(template)
-                search1_feat = model.module.feature(search1)
-                search2_feat = model.module.feature(search2)
-            else:
-                template_feat = model.feature(template)
-                search1_feat = model.feature(search1)
-                search2_feat = model.feature(search2)
-
-            # forward tracking 1
-            fake_yf = forward_tracking(model, template_feat, search1_feat, label, initial_y)
-
-            # forward tracking 2
-            fake_yf = forward_tracking(model, search1_feat, search2_feat, fake_yf, initial_y)
-
-            # backward tracking
-            output = model(search2_feat, template_feat, fake_yf)
-            output = output_drop(output, target)
+            output = do_tracking(initial_y, label, model, search1, search2, template)
             loss = criterion(output, target) / (args.batch_size * gpu_num)
 
             # measure accuracy and record loss
@@ -172,6 +98,64 @@ def validate(val_loader, model, criterion):
         print(' * Loss {loss.val:.4f} ({loss.avg:.4f})'.format(loss=losses))
 
     return losses.avg
+
+
+def do_tracking(initial_y, label, model, search1, search2, template):
+    template = template.cuda(non_blocking=True)
+    search1 = search1.cuda(non_blocking=True)
+    search2 = search2.cuda(non_blocking=True)
+    if gpu_num > 1:
+        template_feat = model.module.feature(template)
+        search1_feat = model.module.feature(search1)
+        search2_feat = model.module.feature(search2)
+    else:
+        template_feat = model.feature(template)
+        search1_feat = model.feature(search1)
+        search2_feat = model.feature(search2)
+
+    # forward tracking 1
+    fake_yf = forward_tracking(model, template_feat, search1_feat, label, initial_y)
+
+    # forward tracking 2
+    fake_yf = forward_tracking(model, search1_feat, search2_feat, fake_yf, initial_y)
+
+    # backward tracking
+    output = model(search2_feat, template_feat, fake_yf)
+
+    # the sample dropout is necessary, otherwise we find the loss tends to become unstable
+    output = output_drop(output, target)
+
+    return output
+
+
+def forward_tracking(model, template, search, label, initial_y):
+    batch_size = args.batch_size * gpu_num
+
+    # compute the model response for the template, search region and label
+    with torch.no_grad():
+        response = model(template, search, label)
+
+    return create_fake_y(batch_size, initial_y, response)
+
+
+def create_fake_y(batch_size, initial_y, response):
+    # find the peak location indices in the flattened response maps
+    peak, index = torch.max(response.view(batch_size, -1), 1)
+
+    # convert the indices in the flattened response map to 2D coordinates in the plane
+    r_max, c_max = np.unravel_index(index, [tracker_config.output_sz, tracker_config.output_sz])
+
+    fake_y = np.zeros((batch_size, 1, tracker_config.output_sz, tracker_config.output_sz))
+    for j in range(batch_size):
+        shift_y = np.roll(initial_y, r_max[j])
+        fake_y[j, ...] = np.roll(shift_y, c_max[j])
+
+    fake_yview = torch.Tensor(fake_y) \
+        .view(batch_size, 1, tracker_config.output_sz, tracker_config.output_sz) \
+        .cuda()
+
+    fake_yf = torch.rfft(fake_yview, signal_ndim=2)
+    return fake_yf.cuda(non_blocking=True)
 
 
 def main():
