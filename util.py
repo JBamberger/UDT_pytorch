@@ -1,5 +1,9 @@
-import numpy as np
+import os
+import shutil
+from os.path import join
+
 import cv2
+import numpy as np
 import torch
 
 
@@ -73,3 +77,27 @@ def output_drop(output, target):
 
 def compute_lr_gamma(initial_lr, final_lr, epochs):
     return (final_lr / initial_lr) ** (1 / epochs)
+
+
+class CheckpointSaver:
+    def __init__(self, save_path, verbose=False):
+        self.save_path = save_path
+        self.verbose = verbose
+
+    def save_checkpoint(self, state, is_best):
+        if not os.path.isdir(self.save_path):
+            os.makedirs(self.save_path)
+            if self.verbose:
+                print("Creating checkpoint directory: " + self.save_path)
+
+        cp_file = os.path.join(self.save_path, 'checkpoint.pth.tar')
+        torch.save(state, cp_file)
+        if self.verbose:
+            print("Writing checkpoint file: " + cp_file)
+
+        if is_best:
+            best_cp_file = os.path.join(self.save_path, 'model_best.pth.tar')
+            shutil.copyfile(cp_file, best_cp_file)
+
+            if self.verbose:
+                print("Creating copy for best checkpoint: " + best_cp_file)
