@@ -12,4 +12,18 @@ class DCFNetFeature(nn.Module):
         )
 
     def forward(self, x):
+        # input shape: batch, 3, h, w
+        # output shape: batch, 32, h-4, w-4
         return self.feature(x)
+
+
+if __name__ == '__main__':
+    import torch
+
+    feat = DCFNetFeature()
+    feat.eval()
+
+    batch = torch.zeros((32, 3, 125, 125))
+    output = feat(batch)
+
+    print(output.shape)

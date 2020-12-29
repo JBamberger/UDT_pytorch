@@ -23,8 +23,13 @@ class TrackerConfig(object):
     padding = 2.0
     output_sigma_factor = 0.1
     output_sigma = crop_sz / (1 + padding) * output_sigma_factor
+
+    # shape: 121, 121
     y = util.gaussian_shaped_labels(output_sigma, [output_sz, output_sz]).astype(np.float32)
+
+    # shape: 1, 1, 121, 61, 2
     yf = torch.rfft(torch.Tensor(y).view(1, 1, output_sz, output_sz).cuda(), signal_ndim=2)
+
     # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
 
 
@@ -72,7 +77,9 @@ def validate(val_loader, model, criterion):
     losses = AverageMeter()
 
     model.eval()
+
     initial_y = tracker_config.y.copy()
+    # Shape: batch, 1, 121, 61, 2
     label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1, 1).cuda(non_blocking=True)
 
     with torch.no_grad():
@@ -101,6 +108,8 @@ def validate(val_loader, model, criterion):
 
 
 def do_tracking(initial_y, label, model, search1, search2, template):
+    # template, search1, search2 shape: batch_size, channels, height, width
+
     template = template.cuda(non_blocking=True)
     search1 = search1.cuda(non_blocking=True)
     search2 = search2.cuda(non_blocking=True)
