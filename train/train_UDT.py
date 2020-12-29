@@ -268,7 +268,7 @@ print('GPU NUM: {:2d}'.format(gpu_num))
 if gpu_num > 1:
     model = torch.nn.DataParallel(model, list(range(gpu_num))).cuda()
 
-criterion = nn.MSELoss(size_average=False).cuda()
+criterion = nn.MSELoss(reduction='sum').cuda()
 
 optimizer = torch.optim.SGD(model.parameters(),
                             lr=args.lr,
