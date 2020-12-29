@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import torch
 
 
 def cxy_wh_2_rect1(pos, sz):
@@ -57,3 +58,18 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+
+def output_drop(output, target):
+    delta1 = (output - target) ** 2
+    batch_sz = delta1.shape[0]
+    delta = delta1.view(batch_sz, -1).sum(dim=1)
+    sort_delta, index = torch.sort(delta, descending=True)
+    # unreliable samples (10% of the total) do not produce grad (we simply copy the groundtruth label)
+    for i in range(int(round(0.1 * batch_sz))):
+        output[index[i], ...] = target[index[i], ...]
+    return output
+
+
+def compute_lr_gamma(initial_lr, final_lr, epochs):
+    return (final_lr / initial_lr) ** (1 / epochs)

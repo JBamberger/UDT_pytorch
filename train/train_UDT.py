@@ -15,18 +15,7 @@ from dataset import ILSVRC2015
 from DCFNet import DCFNet
 import config
 import util
-from util import AverageMeter
-
-
-def output_drop(output, target):
-    delta1 = (output - target) ** 2
-    batch_sz = delta1.shape[0]
-    delta = delta1.view(batch_sz, -1).sum(dim=1)
-    sort_delta, index = torch.sort(delta, descending=True)
-    # unreliable samples (10% of the total) do not produce grad (we simply copy the groundtruth label)
-    for i in range(int(round(0.1 * batch_sz))):
-        output[index[i], ...] = target[index[i], ...]
-    return output
+from util import AverageMeter, output_drop
 
 
 class TrackerConfig(object):
@@ -44,12 +33,6 @@ class TrackerConfig(object):
     yf = torch.rfft(torch.Tensor(y).view(1, 1, output_sz, output_sz).cuda(), signal_ndim=2)
 
     # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
-
-
-def adjust_learning_rate(optimizer, epoch):
-    lr = np.logspace(-2, -5, num=args.epochs)[epoch]
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
 
 
 def save_checkpoint(state, is_best, filename=None):
@@ -125,8 +108,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         # backward tracking
         output = model(search2_feat, template_feat, fake_yf)
-        output = output_drop(output,
-                             target)  # the sample dropout is necessary, otherwise we find the loss tends to become unstable
+        # the sample dropout is necessary, otherwise we find the loss tends to become unstable
+        output = output_drop(output, target)
 
         # consistency loss. target is the initial Gaussian label
         loss = criterion(output, target) / template.size(0)
@@ -230,7 +213,7 @@ def validate(val_loader, model, criterion):
     return losses.avg
 
 
-parser = argparse.ArgumentParser(description='Training DCFNet in Pytorch 0.4.0')
+parser = argparse.ArgumentParser(description='Training DCFNet in PyTorch')
 parser.add_argument('--input_sz', dest='input_sz', default=125, type=int, help='crop input size')
 parser.add_argument('--padding', dest='padding', default=2.0, type=float, help='crop padding size')
 parser.add_argument('--range', dest='range', default=10, type=int, help='select range')
@@ -274,6 +257,9 @@ optimizer = torch.optim.SGD(model.parameters(),
                             lr=args.lr,
                             momentum=args.momentum,
                             weight_decay=args.weight_decay)
+
+lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+    optimizer, gamma=util.compute_lr_gamma(args.lr, 1e-5, args.epochs))
 
 target = torch.Tensor(tracker_config.y) \
     .cuda() \
@@ -319,9 +305,11 @@ val_loader = torch.utils.data.DataLoader(
     val_dataset, batch_size=args.batch_size * gpu_num, shuffle=False,
     num_workers=args.workers, pin_memory=True, drop_last=True)
 
-for epoch in range(args.start_epoch, args.epochs):
-    adjust_learning_rate(optimizer, epoch)
+# Bring the lr scheduler to the first epoch
+for epoch in range(args.start_epoch):
+    lr_scheduler.step()
 
+for epoch in range(args.start_epoch, args.epochs):
     # train for one epoch
     train(train_loader, model, criterion, optimizer, epoch)
 
@@ -337,3 +325,6 @@ for epoch in range(args.start_epoch, args.epochs):
         'best_loss': best_loss,
         'optimizer': optimizer.state_dict(),
     }, is_best)
+
+    # Update the learning rate
+    lr_scheduler.step()
