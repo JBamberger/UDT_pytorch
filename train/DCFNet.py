@@ -1,7 +1,7 @@
 import torch
+import torch.fft as fft
 import torch.nn as nn
 
-import complex_numbers as cn
 from train.DCFNetFeature import DCFNetFeature
 
 
@@ -10,33 +10,31 @@ class DCFNet(nn.Module):
         super(DCFNet, self).__init__()
         self.feature = DCFNetFeature()
         self.yf = config.yf.clone()
+        # regularization parameter in the regression formulation
         self.lambda0 = config.lambda0
 
-    def forward(self, z, x, label):
-        # z shape: batch, 32, 121, 121
-        # x shape: batch, 32, 121, 121
-        # Label shape: batch, 1, 121, 61, 2
+    def forward(self, template, search, label):
+        # Template shape: R[batch, 32, 121, 121]
+        # Search shape:   R[batch, 32, 121, 121]
+        # Label shape:    R[batch,  1, 121,  61]
 
+        # zf & xf shape: C[batch, 32, 121, 61]
+        zf = fft.rfftn(template, dim=[-2, -1])
+        xf = fft.rfftn(search, dim=[-2, -1])
 
-        # z = self.feature(z)
-        # x = self.feature(x)
+        # R[batch, 1, 121, 61]
+        kzzf = torch.sum(zf.real ** 2 + zf.imag ** 2, dim=1, keepdim=True)
 
-        # shapes: batch, 32, 121, 61, 2
-        zf = torch.rfft(z, signal_ndim=2)
-        xf = torch.rfft(x, signal_ndim=2)
+        # C[batch, 1, 121, 61]
+        t = xf * torch.conj(zf)
+        kxzf = torch.sum(t, dim=1, keepdim=True)
 
-        # shape change: [batch, 32, 121, 61, 2] -> [batch, 32, 121, 61, 1] -> [batch, 1, 121, 61, 1]
-        kzzf = torch.sum(torch.sum(zf ** 2, dim=4, keepdim=True), dim=1, keepdim=True)
+        # C[batch, 1, 121, 61]
+        alphaf = label.to(device=template.device) / (kzzf + self.lambda0)
 
-        # shape change: [batch, 32, 121, 61, 2] -> [batch, 32, 121, 61, 2] -> [batch, 1, 121, 61, 2]
-        kxzf = torch.sum(cn.mulconj(xf, zf), dim=1, keepdim=True)
-
-        # shape: [batch, 1, 121, 61, 2]
-        alphaf = label.to(device=z.device) / (kzzf + self.lambda0)
-        # alphaf = self.yf.to(device=z.device) / (kzzf + self.lambda0) # very Ugly
-
-        # shape change: -> [42, 1, 121, 61, 2] -> [42, 1, 121, 121]
-        return torch.irfft(cn.mul(kxzf, alphaf), signal_ndim=2)
+        # R[batch, 1, 121, 121]
+        response = fft.irfftn(kxzf * alphaf, s=[121, 121], dim=[-2, -1])
+        return response
 
 
 if __name__ == '__main__':

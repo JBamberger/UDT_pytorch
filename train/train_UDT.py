@@ -5,13 +5,14 @@ from os.path import isfile
 
 import numpy as np
 import torch
+import torch.fft as fft
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 from torch.utils.data import dataloader
 
 import config
 import util
-from DCFNet import DCFNet
+from train.DCFNet import DCFNet
 from dataset import ILSVRC2015
 from util import AverageMeter, output_drop
 
@@ -28,7 +29,7 @@ class TrackerConfig(object):
     y = util.gaussian_shaped_labels(output_sigma, [output_sz, output_sz]).astype(np.float32)
 
     # shape: 1, 1, 121, 61, 2
-    yf = torch.rfft(torch.Tensor(y).view(1, 1, output_sz, output_sz).cuda(), signal_ndim=2)
+    yf = fft.rfftn(torch.Tensor(y).view(1, 1, output_sz, output_sz).cuda(), dim=[-2, -1])
 
     # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
 
@@ -41,7 +42,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     # switch to train mode
     model.train()
     initial_y = tracker_config.y.copy()
-    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1, 1).cuda(non_blocking=True)
+    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1).cuda(non_blocking=True)
 
     end = time.time()
     for i, (template, search1, search2) in enumerate(train_loader):
@@ -64,12 +65,13 @@ def train(train_loader, model, criterion, optimizer, epoch):
         end = time.time()
 
         if i % args.print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
-                epoch, i, len(train_loader), batch_time=batch_time,
-                data_time=data_time, loss=losses))
+
+
+
+            print(f'Epoch: [{epoch}][{i}/{len(train_loader)}]\t'
+                  f'Time {batch_time.val:2.3f} ({batch_time.avg:2.3f})\t'
+                  f'Data {data_time.val:2.3f} ({data_time.avg:2.3f})\t'
+                  f'Loss {losses.val:2.4f} ({losses.avg:2.4f})\t')
 
 
 def validate(val_loader, model, criterion):
@@ -79,8 +81,8 @@ def validate(val_loader, model, criterion):
     model.eval()
 
     initial_y = tracker_config.y.copy()
-    # Shape: batch, 1, 121, 61, 2
-    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1, 1).cuda(non_blocking=True)
+    # Shape: batch, 1, 121, 61
+    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1).cuda(non_blocking=True)
 
     with torch.no_grad():
         end = time.time()
@@ -149,22 +151,21 @@ def forward_tracking(model, template, search, label, initial_y):
 
 def create_fake_y(batch_size, initial_y, response):
     # find the peak location indices in the flattened response maps
-    peak, index = torch.max(response.view(batch_size, -1), 1)
+    peak, index = torch.max(response.view(batch_size, -1), dim=1)
 
     # convert the indices in the flattened response map to 2D coordinates in the plane
-    r_max, c_max = np.unravel_index(index, [tracker_config.output_sz, tracker_config.output_sz])
+    r_max, c_max = np.unravel_index(index.cpu(), [tracker_config.output_sz, tracker_config.output_sz])
 
     fake_y = np.zeros((batch_size, 1, tracker_config.output_sz, tracker_config.output_sz))
     for j in range(batch_size):
         shift_y = np.roll(initial_y, r_max[j])
         fake_y[j, ...] = np.roll(shift_y, c_max[j])
 
+    # Compute fourier transform of the label
     fake_yview = torch.Tensor(fake_y) \
         .view(batch_size, 1, tracker_config.output_sz, tracker_config.output_sz) \
         .cuda()
-
-    fake_yf = torch.rfft(fake_yview, signal_ndim=2)
-    return fake_yf.cuda(non_blocking=True)
+    return fft.rfftn(fake_yview, dim=[-2, -1]).cuda(non_blocking=True)
 
 
 def main():
