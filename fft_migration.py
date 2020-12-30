@@ -105,6 +105,26 @@ def fft_old(z, x, label):
 
 ##############################################
 
+x = torch.rand((42,32,121,121))
+
+a = torch.rfft(x, signal_ndim=2, onesided=False)
+b = fft.fftn(x, dim=[-2,-1])
+
+ca = torch.view_as_complex(a)
+print(a.shape)
+print(b.shape)
+print(torch.allclose(ca, b))
+
+u = ca - b
+v = u.abs()
+h = torch.histc(v)
+
+
+import matplotlib.pyplot as plt
+plt.hist(v.flatten().numpy(), bins=500, log=True)
+plt.show()
+
+exit()
 
 # fft_comparison()
 

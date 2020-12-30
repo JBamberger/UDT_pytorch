@@ -7,11 +7,11 @@ import numpy as np
 
 
 def overlap_ratio(rect1, rect2):
-    '''
+    """
     Compute overlap ratio between two rects
     - rect: 1d array of [x,y,w,h] or
             2d array of N x [x,y,w,h]
-    '''
+    """
 
     if rect1.ndim == 1:
         rect1 = rect1[None, :]

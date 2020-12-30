@@ -1,5 +1,6 @@
 import torch.nn as nn
-import torch  # pytorch 0.4.0! fft
+import torch
+import torch.fft as fft
 import complex_numbers as cn
 from track.DCFNetFeature import DCFNetFeature
 
@@ -14,9 +15,9 @@ class DCFNet(nn.Module):
 
     def forward(self, x):
         x = self.feature(x) * self.config.cos_window
-        xf = torch.rfft(x, signal_ndim=2)
+        xf = fft.rfftn(x, dim=[-2, -1])
         kxzf = torch.sum(cn.mulconj(xf, self.model_zf), dim=1, keepdim=True)
-        response = torch.irfft(cn.mul(kxzf, self.model_alphaf), signal_ndim=2)
+        response = fft.irfftn(cn.mul(kxzf, self.model_alphaf), dim=[-2, -1])
         # r_max = torch.max(response)
         # cv2.imshow('response', response[0, 0].data.cpu().numpy())
         # cv2.waitKey(0)
@@ -24,7 +25,7 @@ class DCFNet(nn.Module):
 
     def update(self, z, lr=1.):
         z = self.feature(z) * self.config.cos_window
-        zf = torch.rfft(z, signal_ndim=2)
+        zf = fft.rfft(z, dim=[-2, -1])
         kzzf = torch.sum(torch.sum(zf ** 2, dim=4, keepdim=True), dim=1, keepdim=True)
         alphaf = self.config.yf / (kzzf + self.config.lambda0)
         if lr > 0.99:
@@ -96,6 +97,6 @@ if __name__ == '__main__':
     x_pred = net(x_t).data.numpy()
     pred_error = np.sum(np.abs(np.transpose(x_pred, (0, 2, 3, 1)).reshape(-1) - x_out.reshape(-1)))
 
-    x_fft = torch.rfft(x_t, signal_ndim=2, onesided=False)
+    x_fft = fft.fftn(x_t, dim=[-2,-1])
 
     print('model_transfer_error:{:.5f}'.format(pred_error))
