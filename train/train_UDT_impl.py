@@ -11,7 +11,7 @@ from torch.backends import cudnn as cudnn
 import config
 import util
 from train.DCFNet import DCFNet
-from util import AverageMeter, output_drop
+from util import AverageMeter, output_drop, create_fake_y
 
 
 class TrackerConfig(object):
@@ -23,10 +23,10 @@ class TrackerConfig(object):
     output_sigma = crop_sz / (1 + padding) * output_sigma_factor
 
     # shape: 121, 121
-    y = util.gaussian_shaped_labels(output_sigma, [output_sz, output_sz]).astype(np.float32)
+    y = torch.tensor(util.gaussian_shaped_labels(output_sigma, [output_sz, output_sz]).astype(np.float32)).cuda()
 
     # shape: 1, 1, 121, 61, 2
-    yf = fft.rfftn(torch.Tensor(y).view(1, 1, output_sz, output_sz).cuda(), dim=[-2, -1])
+    yf = fft.rfftn(y.view(1, 1, output_sz, output_sz), dim=[-2, -1])
 
     # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
 
@@ -38,8 +38,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     # switch to train mode
     model.train()
-    initial_y = tracker_config.y.copy()
-    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1).cuda(non_blocking=True)
+    initial_y = tracker_config.y.clone()
+    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1)
 
     end = time.time()
     for i, (template, search1, search2) in enumerate(train_loader):
@@ -74,9 +74,9 @@ def validate(val_loader, model, criterion):
 
     model.eval()
 
-    initial_y = tracker_config.y.copy()
+    initial_y = tracker_config.y.clone()
     # Shape: batch, 1, 121, 61
-    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1).cuda(non_blocking=True)
+    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1)
 
     with torch.no_grad():
         end = time.time()
@@ -134,32 +134,12 @@ def do_tracking(initial_y, label, model, search1, search2, template):
 
 
 def forward_tracking(model, template, search, label, initial_y):
-    batch_size = args.batch_size * gpu_num
-
     # compute the model response for the template, search region and label
     with torch.no_grad():
         response = model(template, search, label)
 
-    return create_fake_y(batch_size, initial_y, response)
-
-
-def create_fake_y(batch_size, initial_y, response):
-    # find the peak location indices in the flattened response maps
-    peak, index = torch.max(response.view(batch_size, -1), dim=1)
-
-    # convert the indices in the flattened response map to 2D coordinates in the plane
-    r_max, c_max = np.unravel_index(index.cpu(), [tracker_config.output_sz, tracker_config.output_sz])
-
-    fake_y = np.zeros((batch_size, 1, tracker_config.output_sz, tracker_config.output_sz))
-    for j in range(batch_size):
-        shift_y = np.roll(initial_y, r_max[j])
-        fake_y[j, ...] = np.roll(shift_y, c_max[j])
-
-    # Compute fourier transform of the label
-    fake_yview = torch.Tensor(fake_y) \
-        .view(batch_size, 1, tracker_config.output_sz, tracker_config.output_sz) \
-        .cuda()
-    return fft.rfftn(fake_yview, dim=[-2, -1]).cuda(non_blocking=True)
+    fake_y = create_fake_y(initial_y, response)
+    return fft.rfftn(fake_y, dim=[-2, -1]).cuda(non_blocking=True)
 
 
 def main(pargs, pgpu_num, ptrain_loader, pval_loader):
@@ -181,12 +161,10 @@ def main(pargs, pgpu_num, ptrain_loader, pval_loader):
                                 momentum=args.momentum, weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
         optimizer, gamma=util.compute_lr_gamma(args.lr, 1e-5, args.epochs))
+
     # for training
-    target = torch.Tensor(tracker_config.y) \
-        .cuda() \
-        .unsqueeze(0) \
-        .unsqueeze(0) \
-        .repeat(args.batch_size * gpu_num, 1, 1, 1)
+    target = tracker_config.y.unsqueeze(0).unsqueeze(0).repeat(args.batch_size * gpu_num, 1, 1, 1)
+
     # optionally resume from a checkpoint
     if args.resume:
         if isfile(args.resume):

@@ -101,3 +101,20 @@ class CheckpointSaver:
 
             if self.verbose:
                 print("Creating copy for best checkpoint: " + best_cp_file)
+
+
+def create_fake_y(initial_y, response):
+    batch_size = response.shape[0]
+    d = response.shape[2]
+
+    # compute the coordinates of the maximum for each batch image
+    m = response.view(batch_size, -1).argmax(dim=1).view(-1, 1)
+    cy = m // d
+    cx = m % d
+
+    # roll the template to the given maximum for each batch image
+    fake_y = torch.empty_like(response)
+    for i in range(batch_size):
+        fake_y[i, ...] = torch.roll(initial_y, shifts=(cy[i].item(), cx[i].item()), dims=(0, 1))
+
+    return fake_y

@@ -1,7 +1,5 @@
 import argparse
 
-
-
 from dataset import ILSVRC2015
 
 parser = argparse.ArgumentParser(description='Training DCFNet in PyTorch')
@@ -52,3 +50,14 @@ if __name__ == '__main__':
         num_workers=args.workers, pin_memory=True, drop_last=True)
 
     main(args, gpu_num, train_loader, val_loader)
+
+    # import torch.autograd.profiler as profiler
+    # with profiler.profile(use_cuda=True, record_shapes=True, profile_memory=True, with_stack=True) as p:
+    #     with profiler.record_function('model_inference'):
+    #         main(args, gpu_num, train_loader, val_loader)
+    #
+    # perf = p.key_averages(group_by_stack_n=5).table(sort_by="self_cuda_time_total", row_limit=-1)
+    # with open('perf.txt', 'w', encoding='utf8') as f:
+    #     f.write(perf)
+    # exit()
+    # print(p.key_averages(group_by_input_shape=True).table(sort_by="self_cuda_time_total", row_limit=-1))
