@@ -97,13 +97,13 @@ if __name__ == '__main__':
     net.eval().cuda()
 
     speed = []
-    for video_id, (video_name, image_files, init_rect, gt_rects) in enumerate(ds):  # run without resetting
+    for video_id, video in enumerate(ds):  # run without resetting
         tic = time.time()
 
-        n_images = len(image_files)
-        target_pos, target_sz = rect1_2_cxy_wh(init_rect)  # OTB label is 1-indexed
+        n_images = len(video.image_files)
+        target_pos, target_sz = rect1_2_cxy_wh(video.init_rect)  # OTB label is 1-indexed
 
-        im = cv2.imread(image_files[0])  # HxWxC
+        im = video.frame_at(0)  # HxWxC
 
         # confine results
         min_sz = np.maximum(config.min_scale_factor * target_sz, 4)
@@ -120,7 +120,7 @@ if __name__ == '__main__':
         res = [cxy_wh_2_rect1(target_pos, target_sz)]  # save in .txt
         patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)
         for f in range(1, n_images):  # track
-            im = cv2.imread(image_files[f])
+            im = video.frame_at(f)
 
             for i in range(config.num_scale):  # crop multi-scale search region
                 window_sz = target_sz * (config.scale_factor[i] * (1 + config.padding))
@@ -158,18 +158,18 @@ if __name__ == '__main__':
                               (int(target_pos[0] + target_sz[0] / 2), int(target_pos[1] + target_sz[1] / 2)),
                               (0, 255, 0), 3)
                 cv2.putText(im_show, str(f), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
-                cv2.imshow(video_name, im_show)
+                cv2.imshow(video.video_name, im_show)
                 cv2.waitKey(1)
 
         toc = time.time() - tic
         fps = n_images / toc
         speed.append(fps)
-        print(f'{video_id:3d} Video: {video_name:12s} Time: {toc:3.1f}s\tSpeed: {fps:3.1f}fps')
+        print(f'{video_id:3d} Video: {video.video_name:12s} Time: {toc:3.1f}s\tSpeed: {fps:3.1f}fps')
 
         # save result
         test_path = join('result', args.dataset, 'DCFNet_test')
         if not isdir(test_path): makedirs(test_path)
-        result_path = join(test_path, video_name + '.txt')
+        result_path = join(test_path, video.video_name + '.txt')
         with open(result_path, 'w') as f:
             for x in res:
                 f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')

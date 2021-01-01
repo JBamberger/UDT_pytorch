@@ -5,6 +5,8 @@ import glob
 from os.path import join as fullfile
 import numpy as np
 
+from dataset import OtbDataset
+
 
 def overlap_ratio(rect1, rect2):
     """
@@ -61,46 +63,24 @@ def convert_bb_to_center(bboxes):
 
 
 def eval_auc(dataset='OTB2015', tracker_reg='S*', start=0, end=1e6):
-    list_path = os.path.join('dataset', dataset + '.json')
-    annos = json.load(open(list_path, 'r'))
-    seqs = annos.keys()
-
-    OTB2013 = ['carDark', 'car4', 'david', 'david2', 'sylvester', 'trellis', 'fish', 'mhyang', 'soccer', 'matrix',
-               'ironman', 'deer', 'skating1', 'shaking', 'singer1', 'singer2', 'coke', 'bolt', 'boy', 'dudek',
-               'crossing', 'couple', 'football1', 'jogging_1', 'jogging_2', 'doll', 'girl', 'walking2', 'walking',
-               'fleetface', 'freeman1', 'freeman3', 'freeman4', 'david3', 'jumping', 'carScale', 'skiing', 'dog1',
-               'suv', 'motorRolling', 'mountainBike', 'lemming', 'liquor', 'woman', 'faceocc1', 'faceocc2',
-               'basketball', 'football', 'subway', 'tiger1', 'tiger2']
-
-    OTB2015 = ['carDark', 'car4', 'david', 'david2', 'sylvester', 'trellis', 'fish', 'mhyang', 'soccer', 'matrix',
-               'ironman', 'deer', 'skating1', 'shaking', 'singer1', 'singer2', 'coke', 'bolt', 'boy', 'dudek',
-               'crossing', 'couple', 'football1', 'jogging_1', 'jogging_2', 'doll', 'girl', 'walking2', 'walking',
-               'fleetface', 'freeman1', 'freeman3', 'freeman4', 'david3', 'jumping', 'carScale', 'skiing', 'dog1',
-               'suv', 'motorRolling', 'mountainBike', 'lemming', 'liquor', 'woman', 'faceocc1', 'faceocc2',
-               'basketball', 'football', 'subway', 'tiger1', 'tiger2', 'clifBar', 'biker', 'bird1', 'blurBody',
-               'blurCar2', 'blurFace', 'blurOwl', 'box', 'car1', 'crowds', 'diving', 'dragonBaby', 'human3', 'human4_2',
-               'human6', 'human9', 'jump', 'panda', 'redTeam', 'skating2_1', 'skating2_2', 'surfer', 'bird2',
-               'blurCar1', 'blurCar3', 'blurCar4', 'board', 'bolt2', 'car2', 'car24', 'coupon', 'dancer', 'dancer2',
-               'dog', 'girl2', 'gym', 'human2', 'human5', 'human7', 'human8', 'kiteSurf', 'man', 'rubik', 'skater',
-               'skater2', 'toy', 'trans', 'twinnings', 'vase']
+    ds = OtbDataset(variant=dataset)
 
     trackers = glob.glob(fullfile('result', dataset, tracker_reg))
     trackers = trackers[start:min(end, len(trackers))]
 
-    n_seq = len(seqs)
+    n_seq = len(ds)
     thresholds_overlap = np.arange(0, 1.05, 0.05)
     # thresholds_error = np.arange(0, 51, 1)
 
     success_overlap = np.zeros((n_seq, len(trackers), len(thresholds_overlap)))
     # success_error = np.zeros((n_seq, len(trackers), len(thresholds_error)))
-    for i in range(n_seq):
-        seq = seqs[i]
-        gt_rect = np.array(annos[seq]['gt_rect']).astype(np.float)
+    for i, video in enumerate(ds):
+        gt_rect = np.array(video.gt_rects).astype(np.float)
         gt_center = convert_bb_to_center(gt_rect)
         for j in range(len(trackers)):
             tracker = trackers[j]
-            print('{:d} processing:{} tracker: {}'.format(i, seq, tracker))
-            bb = get_result_bb(tracker, seq)
+            print(f'{i:d} processing:{video.video_name} tracker: {tracker}')
+            bb = get_result_bb(tracker, video.video_name)
             center = convert_bb_to_center(bb)
             success_overlap[i][j] = compute_success_overlap(gt_rect, bb)
             # success_error[i][j] = compute_success_error(gt_center, center)
@@ -109,9 +89,10 @@ def eval_auc(dataset='OTB2015', tracker_reg='S*', start=0, end=1e6):
 
     if 'OTB2015' == dataset:
         OTB2013_id = []
-        for i in range(n_seq):
-            if seqs[i] in OTB2013:
+        for i, video in enumerate(ds):
+            if video.contained_in('OTB2013'):
                 OTB2013_id.append(i)
+
         max_auc_OTB2013 = 0.
         max_name_OTB2013 = ''
         for i in range(len(trackers)):

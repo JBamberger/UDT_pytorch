@@ -70,6 +70,63 @@ class ILSVRC2015(data.Dataset):
             return len(self.imdb['val_set'])
 
 
+OTB2013 = {'carDark', 'car4', 'david', 'david2', 'sylvester', 'trellis', 'fish', 'mhyang', 'soccer', 'matrix',
+           'ironman', 'deer', 'skating1', 'shaking', 'singer1', 'singer2', 'coke', 'bolt', 'boy', 'dudek',
+           'crossing', 'couple', 'football1', 'jogging_1', 'jogging_2', 'doll', 'girl', 'walking2', 'walking',
+           'fleetface', 'freeman1', 'freeman3', 'freeman4', 'david3', 'jumping', 'carScale', 'skiing', 'dog1',
+           'suv', 'motorRolling', 'mountainBike', 'lemming', 'liquor', 'woman', 'faceocc1', 'faceocc2',
+           'basketball', 'football', 'subway', 'tiger1', 'tiger2'}
+
+OTB2015 = {'carDark', 'car4', 'david', 'david2', 'sylvester', 'trellis', 'fish', 'mhyang', 'soccer', 'matrix',
+           'ironman', 'deer', 'skating1', 'shaking', 'singer1', 'singer2', 'coke', 'bolt', 'boy', 'dudek',
+           'crossing', 'couple', 'football1', 'jogging_1', 'jogging_2', 'doll', 'girl', 'walking2', 'walking',
+           'fleetface', 'freeman1', 'freeman3', 'freeman4', 'david3', 'jumping', 'carScale', 'skiing', 'dog1',
+           'suv', 'motorRolling', 'mountainBike', 'lemming', 'liquor', 'woman', 'faceocc1', 'faceocc2',
+           'basketball', 'football', 'subway', 'tiger1', 'tiger2', 'clifBar', 'biker', 'bird1', 'blurBody',
+           'blurCar2', 'blurFace', 'blurOwl', 'box', 'car1', 'crowds', 'diving', 'dragonBaby', 'human3', 'human4_2',
+           'human6', 'human9', 'jump', 'panda', 'redTeam', 'skating2_1', 'skating2_2', 'surfer', 'bird2',
+           'blurCar1', 'blurCar3', 'blurCar4', 'board', 'bolt2', 'car2', 'car24', 'coupon', 'dancer', 'dancer2',
+           'dog', 'girl2', 'gym', 'human2', 'human5', 'human7', 'human8', 'kiteSurf', 'man', 'rubik', 'skater',
+           'skater2', 'toy', 'trans', 'twinnings', 'vase'}
+
+OTB_sequences = {
+    'OTB2013': OTB2013,
+    'OTB2015': OTB2015
+}
+
+
+class OtbVideo:
+
+    def __init__(self, key, video_name, image_files, init_rect, gt_rects):
+        self.key = key
+        self.video_name = video_name
+        self.init_rect = np.array(init_rect).astype(np.float)
+        self.image_files = image_files
+        self._gt_rects = gt_rects
+        self.length = len(self.image_files)
+
+    @property
+    def gt_rects(self):
+        return np.array(self._gt_rects).astype(np.float)
+
+    def contained_in(self, dataset_name):
+        return self.key in OTB_sequences[dataset_name]
+
+    def frame_at(self, index):
+        assert 0 <= index < self.length
+
+        path = self.image_files[index]
+        frame = cv2.imread(path)
+
+        if frame.data is None:
+            raise AssertionError('Video file not fount at path {path}')
+
+        return frame
+
+    def __len__(self):
+        return self.length
+
+
 class OtbDataset:
     def __init__(self, variant='OTB2015', dataset_path=None):
 
@@ -99,12 +156,15 @@ class OtbDataset:
             video = self.annotations[video_key]
 
             video_name = video['name']
-            init_rect = np.array(video['init_rect']).astype(np.float)
+            init_rect = video['init_rect']
             image_names = video['image_files']
             image_files = [os.path.join(self.dataset_path, video_name, 'img', im_f) for im_f in image_names]
             gt_rects = video['gt_rect']
 
-            yield video_name, image_files, init_rect, gt_rects
+            yield OtbVideo(video_key, video_name, image_files, init_rect, gt_rects)
+
+    def __len__(self):
+        return len(videos)
 
 
 if __name__ == '__main__':
