@@ -70,6 +70,43 @@ class ILSVRC2015(data.Dataset):
             return len(self.imdb['val_set'])
 
 
+class OtbDataset:
+    def __init__(self, variant='OTB2015', dataset_path=None):
+
+        if dataset_path is None:
+            dataset_path = os.path.join(config.dataset_root, 'OTB')
+        self.dataset_path = dataset_path
+
+        with open(os.path.join(dataset_path, f'{variant}.json'), 'r') as annotation_file:
+            self.annotations = json.load(annotation_file)
+        self.videos = sorted(self.annotations.keys())
+
+    def __iter__(self):
+        """
+        Schema:
+        { 'key': {
+            'name': folderName
+            'image_files': [imageName1, ...]
+            'init_rect: [int,int,int,int]
+            'gt_rect': [
+                    [int,int,int,int],
+                    ...
+                ]
+            }
+        }
+        """
+        for video_key in self.videos:
+            video = self.annotations[video_key]
+
+            video_name = video['name']
+            init_rect = np.array(video['init_rect']).astype(np.float)
+            image_names = video['image_files']
+            image_files = [os.path.join(self.dataset_path, video_name, 'img', im_f) for im_f in image_names]
+            gt_rects = video['gt_rect']
+
+            yield video_name, image_files, init_rect, gt_rects
+
+
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches

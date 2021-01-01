@@ -8,6 +8,7 @@ import torch
 import cv2
 import time as time
 
+from dataset import OtbDataset
 from track.TrackerConfig import TrackerConfig
 from util import crop_chw, cxy_wh_2_rect1, rect1_2_cxy_wh, cxy_wh_2_bbox
 from DCFNet import DCFNet
@@ -84,11 +85,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', metavar='PATH', default='param.pth')
     args = parser.parse_args()
 
-    dataset = args.dataset
-    base_path = join('dataset', dataset)
-    json_path = join('dataset', dataset + '.json')
-    annos = json.load(open(json_path, 'r'))
-    videos = sorted(annos.keys())
+    ds = OtbDataset(variant=args.dataset)
 
     use_gpu = True
     visualization = False
@@ -100,15 +97,10 @@ if __name__ == '__main__':
     net.eval().cuda()
 
     speed = []
-    # loop videos
-    for video_id, video in enumerate(videos):  # run without resetting
-        video_path_name = annos[video]['name']
-        init_rect = np.array(annos[video]['init_rect']).astype(np.float)
-        image_files = [join(base_path, video_path_name, 'img', im_f) for im_f in annos[video]['image_files']]
+    for video_id, (video_name, image_files, init_rect, gt_rects) in enumerate(ds):  # run without resetting
+        tic = time.time()
+
         n_images = len(image_files)
-
-        tic = time.time()  # time start
-
         target_pos, target_sz = rect1_2_cxy_wh(init_rect)  # OTB label is 1-indexed
 
         im = cv2.imread(image_files[0])  # HxWxC
@@ -166,22 +158,22 @@ if __name__ == '__main__':
                               (int(target_pos[0] + target_sz[0] / 2), int(target_pos[1] + target_sz[1] / 2)),
                               (0, 255, 0), 3)
                 cv2.putText(im_show, str(f), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
-                cv2.imshow(video, im_show)
+                cv2.imshow(video_name, im_show)
                 cv2.waitKey(1)
 
         toc = time.time() - tic
         fps = n_images / toc
         speed.append(fps)
-        print('{:3d} Video: {:12s} Time: {:3.1f}s\tSpeed: {:3.1f}fps'.format(video_id, video, toc, fps))
+        print(f'{video_id:3d} Video: {video_name:12s} Time: {toc:3.1f}s\tSpeed: {fps:3.1f}fps')
 
         # save result
-        test_path = join('result', dataset, 'DCFNet_test')
+        test_path = join('result', args.dataset, 'DCFNet_test')
         if not isdir(test_path): makedirs(test_path)
-        result_path = join(test_path, video + '.txt')
+        result_path = join(test_path, video_name + '.txt')
         with open(result_path, 'w') as f:
             for x in res:
                 f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')
 
     print('***Total Mean Speed: {:3.1f} (FPS)***'.format(np.mean(speed)))
 
-    eval_auc(dataset, 'DCFNet_test', 0, 1)
+    eval_auc(args.dataset, 'DCFNet_test', 0, 1)

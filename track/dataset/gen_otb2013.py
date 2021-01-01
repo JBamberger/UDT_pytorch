@@ -1,6 +1,8 @@
 import json
 
-OTB2015 = json.load(open('OTB2015.json', 'r'))
+with open('OTB2015.json', 'r') as f:
+    OTB2015 = json.load(f)
+
 videos = OTB2015.keys()
 
 OTB2013 = dict()
@@ -13,4 +15,5 @@ for v in videos:
              'basketball', 'football', 'subway', 'tiger1', 'tiger2']:
         OTB2013[v] = OTB2015[v]
 
-json.dump(OTB2013, open('OTB2013.json', 'w'), indent=2)
+with open('OTB2013.json', 'w') as f:
+    json.dump(OTB2013, f, indent=2)

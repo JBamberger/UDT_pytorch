@@ -26,6 +26,8 @@ class TrackerConfig(object):
     net_input_size = [crop_sz, crop_sz]
     net_average_image = np.array([104, 117, 123]).reshape(-1, 1, 1).astype(np.float32)
     output_sigma = crop_sz / (1 + padding) * output_sigma_factor
+
     y = gaussian_shaped_labels(output_sigma, net_input_size)
-    yf = fft.rfftn(torch.Tensor(y).view(1, 1, crop_sz, crop_sz).cuda(), dim=[-2,-1])
+    yf = fft.rfftn(torch.Tensor(y).view(1, 1, crop_sz, crop_sz).cuda(), dim=[-2, -1])
+
     cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()
