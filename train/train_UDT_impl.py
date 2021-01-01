@@ -4,8 +4,8 @@ from os.path import isfile
 
 import numpy as np
 import torch
-from torch import nn as nn
 import torch.fft as fft
+from torch import nn as nn
 from torch.backends import cudnn as cudnn
 
 import config
@@ -14,198 +14,196 @@ from train.DCFNet import DCFNet
 from util import AverageMeter, output_drop, create_fake_y
 
 
-class TrackerConfig(object):
-    crop_sz = 125
-    output_sz = 121
-    lambda0 = 1e-4
-    padding = 2.0
-    output_sigma_factor = 0.1
-    output_sigma = crop_sz / (1 + padding) * output_sigma_factor
+class UdtTrainer(object):
 
-    # shape: 121, 121
-    y = torch.tensor(util.gaussian_shaped_labels(output_sigma, [output_sz, output_sz]).astype(np.float32)).cuda()
+    def __init__(self,
+                 args, gpu_num: int, train_loader, val_loader,
+                 crop_sz=125,
+                 output_sz=121,
+                 lambda0=1e-4,
+                 padding=2.0,
+                 output_sigma_factor=0.1):
+        self.crop_sz = crop_sz
+        self.output_sz = output_sz
+        self.lambda0 = lambda0
+        self.padding = padding
+        output_sigma = crop_sz / (1 + padding) * output_sigma_factor
 
-    # shape: 1, 1, 121, 61, 2
-    yf = fft.rfftn(y.view(1, 1, output_sz, output_sz), dim=[-2, -1])
+        self.args = args
+        self.gpu_num = gpu_num
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.batch_size = args.batch_size * gpu_num
 
-    # cos_window = torch.Tensor(np.outer(np.hanning(crop_sz), np.hanning(crop_sz))).cuda()  # train without cos window
+        self.best_loss = 1e6
 
+        # shape: 121, 121
+        self.y = torch.tensor(util.gaussian_shaped_labels(output_sigma, [self.output_sz, self.output_sz])
+                              .astype(np.float32)).cuda()
+        # shape: 1, 1, 121, 61, 2
+        self.yf = fft.rfftn(self.y.view(1, 1, self.output_sz, self.output_sz), dim=[-2, -1])
+        # Shape: 121, 121
+        self.initial_y = self.y.clone()
+        # Shape: batch, 1, 121, 61
+        self.label = self.yf.repeat(self.batch_size, 1, 1, 1)
 
-def train(train_loader, model, criterion, optimizer, epoch):
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
+        self.model = DCFNet(lambda0=self.lambda0).cuda()
 
-    # switch to train mode
-    model.train()
-    initial_y = tracker_config.y.clone()
-    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1)
+        print('GPU NUM: {:2d}'.format(gpu_num))
+        if gpu_num > 1:
+            self.model = torch.nn.DataParallel(self.model, list(range(gpu_num))).cuda()
 
-    end = time.time()
-    for i, (template, search1, search2) in enumerate(train_loader):
-        # measure data loading time
-        data_time.update(time.time() - end)
+        self.criterion = nn.MSELoss(reduction='sum').cuda()
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=args.lr,
+                                         momentum=args.momentum, weight_decay=args.weight_decay)
 
-        output = do_tracking(initial_y, label, model, search1, search2, template)
-        # consistency loss. target is the initial Gaussian label
-        loss = criterion(output, target) / (args.batch_size * gpu_num)
-        # measure accuracy and record loss
-        losses.update(loss.item())
+        self.lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            self.optimizer, gamma=util.compute_lr_gamma(args.lr, 1e-5, args.epochs))
 
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        # Bring the lr scheduler to the first epoch
+        for epoch in range(args.start_epoch):
+            self.lr_scheduler.step()
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
+        # for training
+        self.target = self.y.unsqueeze(0).unsqueeze(0).repeat(args.batch_size * gpu_num, 1, 1, 1)
+
+        # optionally resume from a checkpoint
+        if args.resume:
+            if isfile(args.resume):
+                print(f"=> loading checkpoint '{args.resume}'")
+                checkpoint = torch.load(args.resume)
+                self.args.start_epoch = checkpoint['epoch']
+                self.best_loss = checkpoint['best_loss']
+                self.model.load_state_dict(checkpoint['state_dict'])
+                self.optimizer.load_state_dict(checkpoint['optimizer'])
+                print(f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})")
+            else:
+                print(f"=> no checkpoint found at '{args.resume}'")
+        cudnn.benchmark = True
+
+        checkpoint_path = args.save if args.save else config.checkpoint_root
+        self.checkpoint_saver = util.CheckpointSaver(
+            save_path=os.path.join(checkpoint_path, f'crop_{args.input_sz:d}_{args.padding:1.1f}'),
+            verbose=True)
+
+    def __call__(self):
+        for epoch in range(self.args.start_epoch, self.args.epochs):
+            self.train(epoch)
+            loss = self.validate()
+
+            # remember best loss and save checkpoint
+            is_best = loss < self.best_loss
+            self.best_loss = min(self.best_loss, loss)
+            self.checkpoint_saver.save_checkpoint({
+                'epoch': epoch + 1,
+                'state_dict': self.model.state_dict(),
+                'best_loss': self.best_loss,
+                'optimizer': self.optimizer.state_dict(),
+            }, is_best)
+
+            # Update the learning rate
+            self.lr_scheduler.step()
+
+    def do_tracking(self, search1, search2, template):
+        # template, search1, search2 shape: batch_size, channels, height, width
+
+        template = template.cuda(non_blocking=True)
+        search1 = search1.cuda(non_blocking=True)
+        search2 = search2.cuda(non_blocking=True)
+        if self.gpu_num > 1:
+            template_feat = self.model.module.feature(template)
+            search1_feat = self.model.module.feature(search1)
+            search2_feat = self.model.module.feature(search2)
+        else:
+            template_feat = self.model.feature(template)
+            search1_feat = self.model.feature(search1)
+            search2_feat = self.model.feature(search2)
+
+        # forward tracking 1
+        # compute the model response for the template, search region and label
+        with torch.no_grad():
+            response1 = self.model(template_feat, search1_feat, self.label)
+        fake_yf = fft.rfftn(create_fake_y(self.initial_y, response1), dim=[-2, -1]).cuda(non_blocking=True)
+
+        # forward tracking 2
+        # compute the model response for the template, search region and label
+        with torch.no_grad():
+            response2 = self.model(search1_feat, search2_feat, fake_yf)
+        fake_yf = fft.rfftn(create_fake_y(self.initial_y, response2), dim=[-2, -1]).cuda(non_blocking=True)
+
+        # backward tracking
+        output = self.model(search2_feat, template_feat, fake_yf)
+
+        # the sample dropout is necessary, otherwise we find the loss tends to become unstable
+        output = output_drop(output, self.target)
+
+        return output
+
+    def train(self, epoch):
+        batch_time = AverageMeter()
+        data_time = AverageMeter()
+        losses = AverageMeter()
+
+        self.model.train()
+
         end = time.time()
+        for i, (template, search1, search2) in enumerate(self.train_loader):
+            # measure data loading time
+            data_time.update(time.time() - end)
 
-        if i % args.print_freq == 0:
-            print(f'Epoch: [{epoch}][{i}/{len(train_loader)}]\t'
-                  f'Time {batch_time.val:2.3f} ({batch_time.avg:2.3f})\t'
-                  f'Data {data_time.val:2.3f} ({data_time.avg:2.3f})\t'
-                  f'Loss {losses.val:2.4f} ({losses.avg:2.4f})\t')
-
-
-def validate(val_loader, model, criterion):
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-
-    model.eval()
-
-    initial_y = tracker_config.y.clone()
-    # Shape: batch, 1, 121, 61
-    label = tracker_config.yf.repeat(args.batch_size * gpu_num, 1, 1, 1)
-
-    with torch.no_grad():
-        end = time.time()
-        for i, (template, search1, search2) in enumerate(val_loader):
-
-            output = do_tracking(initial_y, label, model, search1, search2, template)
-            loss = criterion(output, target) / (args.batch_size * gpu_num)
-
+            output = self.do_tracking(search1, search2, template)
+            # consistency loss. target is the initial Gaussian label
+            loss = self.criterion(output, self.target) / self.batch_size
             # measure accuracy and record loss
             losses.update(loss.item())
+
+            # compute gradient and do SGD step
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
-            if i % args.print_freq == 0:
-                print('Test: [{0}/{1}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
-                    i, len(val_loader), batch_time=batch_time, loss=losses))
+            if i % self.args.print_freq == 0:
+                print(f'Epoch: [{epoch}][{i}/{len(self.train_loader)}]\t'
+                      f'Time {batch_time.val:2.3f} ({batch_time.avg:2.3f})\t'
+                      f'Data {data_time.val:2.3f} ({data_time.avg:2.3f})\t'
+                      f'Loss {losses.val:2.4f} ({losses.avg:2.4f})\t')
 
-        print(' * Loss {loss.val:.4f} ({loss.avg:.4f})'.format(loss=losses))
+    def validate(self):
+        batch_time = AverageMeter()
+        losses = AverageMeter()
 
-    return losses.avg
+        self.model.eval()
 
+        with torch.no_grad():
+            end = time.time()
+            for i, (template, search1, search2) in enumerate(self.val_loader):
 
-def do_tracking(initial_y, label, model, search1, search2, template):
-    # template, search1, search2 shape: batch_size, channels, height, width
+                output = self.do_tracking(search1, search2, template)
+                loss = self.criterion(output, self.target) / self.batch_size
 
-    template = template.cuda(non_blocking=True)
-    search1 = search1.cuda(non_blocking=True)
-    search2 = search2.cuda(non_blocking=True)
-    if gpu_num > 1:
-        template_feat = model.module.feature(template)
-        search1_feat = model.module.feature(search1)
-        search2_feat = model.module.feature(search2)
-    else:
-        template_feat = model.feature(template)
-        search1_feat = model.feature(search1)
-        search2_feat = model.feature(search2)
+                # measure accuracy and record loss
+                losses.update(loss.item())
 
-    # forward tracking 1
-    fake_yf = forward_tracking(model, template_feat, search1_feat, label, initial_y)
+                # measure elapsed time
+                batch_time.update(time.time() - end)
+                end = time.time()
 
-    # forward tracking 2
-    fake_yf = forward_tracking(model, search1_feat, search2_feat, fake_yf, initial_y)
+                if i % self.args.print_freq == 0:
+                    print(f'Test: [{i}/{len(self.val_loader)}]\t'
+                          f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                          f'Loss {losses.val:.4f} ({losses.avg:.4f})\t')
 
-    # backward tracking
-    output = model(search2_feat, template_feat, fake_yf)
+            print(' * Loss {loss.val:.4f} ({loss.avg:.4f})'.format(loss=losses))
 
-    # the sample dropout is necessary, otherwise we find the loss tends to become unstable
-    output = output_drop(output, target)
+        return losses.avg
 
-    return output
+    pass
 
 
-def forward_tracking(model, template, search, label, initial_y):
-    # compute the model response for the template, search region and label
-    with torch.no_grad():
-        response = model(template, search, label)
-
-    fake_y = create_fake_y(initial_y, response)
-    return fft.rfftn(fake_y, dim=[-2, -1]).cuda(non_blocking=True)
-
-
-def main(pargs, pgpu_num, ptrain_loader, pval_loader):
-    global tracker_config, target, args, gpu_num, train_loader, val_loader
-    args = pargs
-    gpu_num = pgpu_num
-    train_loader = ptrain_loader
-    val_loader = pval_loader
-
-    best_loss = 1e6
-    tracker_config = TrackerConfig()
-    model = DCFNet(config=tracker_config).cuda()
-
-    print('GPU NUM: {:2d}'.format(gpu_num))
-    if gpu_num > 1:
-        model = torch.nn.DataParallel(model, list(range(gpu_num))).cuda()
-    criterion = nn.MSELoss(reduction='sum').cuda()
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr,
-                                momentum=args.momentum, weight_decay=args.weight_decay)
-    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
-        optimizer, gamma=util.compute_lr_gamma(args.lr, 1e-5, args.epochs))
-
-    # for training
-    target = tracker_config.y.unsqueeze(0).unsqueeze(0).repeat(args.batch_size * gpu_num, 1, 1, 1)
-
-    # optionally resume from a checkpoint
-    if args.resume:
-        if isfile(args.resume):
-            print(f"=> loading checkpoint '{args.resume}'")
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_loss = checkpoint['best_loss']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print(f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']})")
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-    cudnn.benchmark = True
-    # training data
-    # crop_base_path = os.path.join(config.dataset_root, 'ILSVRC2015', f'crop_{args.input_sz:d}_{args.padding:1.1f}')
-    # if not isdir(crop_base_path):
-    #     print(f'please run gen_training_data.py --output_size {args.input_sz:d} --padding {args.padding:.1f}!')
-    #     exit()
-    checkpoint_path = args.save if args.save else config.checkpoint_root
-    checkpoint_saver = util.CheckpointSaver(
-        os.path.join(checkpoint_path, f'crop_{args.input_sz:d}_{args.padding:1.1f}'))
-
-    # Bring the lr scheduler to the first epoch
-    for epoch in range(args.start_epoch):
-        lr_scheduler.step()
-    for epoch in range(args.start_epoch, args.epochs):
-        # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch)
-
-        # evaluate on validation set
-        loss = validate(val_loader, model, criterion)
-
-        # remember best loss and save checkpoint
-        is_best = loss < best_loss
-        best_loss = min(best_loss, loss)
-        checkpoint_saver.save_checkpoint({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'best_loss': best_loss,
-            'optimizer': optimizer.state_dict(),
-        }, is_best)
-
-        # Update the learning rate
-        lr_scheduler.step()
+def main(args, gpu_num, train_loader, val_loader):
+    trainer = UdtTrainer(args, gpu_num, train_loader, val_loader)
+    trainer()

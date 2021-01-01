@@ -6,12 +6,11 @@ from train.DCFNetFeature import DCFNetFeature
 
 
 class DCFNet(nn.Module):
-    def __init__(self, config=None):
+    def __init__(self, lambda0):
         super(DCFNet, self).__init__()
         self.feature = DCFNetFeature()
-        self.yf = config.yf.clone()
         # regularization parameter in the regression formulation
-        self.lambda0 = config.lambda0
+        self.lambda0 = lambda0
 
     def forward(self, template, search, label):
         # Template shape: R[batch, 32, 121, 121]
@@ -39,5 +38,5 @@ class DCFNet(nn.Module):
 
 if __name__ == '__main__':
     # network test
-    net = DCFNet()
+    net = DCFNet(lambda0=1e-4)
     net.eval()

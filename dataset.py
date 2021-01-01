@@ -15,6 +15,13 @@ class ILSVRC2015(data.Dataset):
         range: number of frames to select search templates from
         """
 
+        # training data
+        # crop_base_path = os.path.join(config.dataset_root,
+        #     'ILSVRC2015', f'crop_{args.input_sz:d}_{args.padding:1.1f}')
+        # if not isdir(crop_base_path):
+        #     print(f'please run gen_training_data.py --output_size {args.input_sz:d} --padding {args.padding:.1f}!')
+        #     exit()
+
         if file is None:
             file = os.path.join(config.dataset_root, 'ILSVRC2015', 'dataset.json')
 
