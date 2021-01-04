@@ -87,7 +87,7 @@ if __name__ == '__main__':
 
     ds = OtbDataset(variant=args.dataset)
 
-    use_gpu = True
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     visualization = False
 
     # default parameter and load feature extractor network
@@ -117,7 +117,8 @@ if __name__ == '__main__':
         target = patch - config.net_average_image
         net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda())
 
-        res = [cxy_wh_2_rect1(target_pos, target_sz)]  # save in .txt
+        track = [cxy_wh_2_rect1(target_pos, target_sz)]
+
         patch_crop = np.zeros((config.num_scale, patch.shape[0], patch.shape[1], patch.shape[2]), np.float32)
         for f in range(1, n_images):  # track
             im = video.frame_at(f)
@@ -145,7 +146,7 @@ if __name__ == '__main__':
             window_sz = target_sz * (config.scale_factor[best_scale] * (1 + config.padding))
 
             target_pos = target_pos + np.array([c_max, r_max]) * window_sz / config.net_input_size
-            target_sz = np.minimum(np.maximum(window_sz / (1 + config.padding), min_sz), max_sz)
+            target_sz = np.clip(window_sz / (1 + config.padding), min_sz, max_sz)
 
             # model update
             window_sz = target_sz * (1 + config.padding)
@@ -154,7 +155,7 @@ if __name__ == '__main__':
             target = patch - config.net_average_image
             net.update(torch.Tensor(np.expand_dims(target, axis=0)).cuda(), lr=config.interp_factor)
 
-            res.append(cxy_wh_2_rect1(target_pos, target_sz))  # 1-index
+            track.append(cxy_wh_2_rect1(target_pos, target_sz))  # 1-index
 
             if visualization:
                 im_show = cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
@@ -177,7 +178,7 @@ if __name__ == '__main__':
 
         result_path = join(test_path, video.video_name + '.txt')
         with open(result_path, 'w') as f:
-            for x in res:
+            for x in track:
                 f.write(','.join(['{:.2f}'.format(i) for i in x]) + '\n')
 
     print('***Total Mean Speed: {:3.1f} (FPS)***'.format(np.mean(speed)))
