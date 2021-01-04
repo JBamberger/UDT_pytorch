@@ -128,7 +128,10 @@ if __name__ == '__main__':
                 patch_crop[i, :] = crop_chw(im, bbox, config.crop_sz)
 
             search = patch_crop - config.net_average_image
-            response = net(torch.Tensor(search).cuda())
+            search = torch.Tensor(search).cuda()
+
+            response = net(search)
+
             peak, idx = torch.max(response.view(config.num_scale, -1), 1)
             idx = idx.cpu().numpy()
             peak = peak.data.cpu().numpy() * config.scale_penalties
@@ -168,8 +171,10 @@ if __name__ == '__main__':
         print(f'{video_id:3d} Video: {video.video_name:12s} Time: {toc:3.1f}s\tSpeed: {fps:3.1f}fps')
 
         # save result
-        test_path = join('result', args.dataset, 'DCFNet_test')
-        if not isdir(test_path): makedirs(test_path)
+        test_path = join(cfg.results_root, args.dataset, 'DCFNet_test')
+        if not isdir(test_path):
+            makedirs(test_path)
+
         result_path = join(test_path, video.video_name + '.txt')
         with open(result_path, 'w') as f:
             for x in res:

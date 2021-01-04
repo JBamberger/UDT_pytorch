@@ -5,6 +5,7 @@ from os.path import isfile, isdir, join
 
 import cv2
 
+import config
 from DCFNet import *
 from track.DCFNetTracker import DCFNetTracker
 from track.TrackerConfig import TrackerConfig
@@ -19,7 +20,7 @@ args = parser.parse_args()
 def tune_otb(param):
     regions = []  # result and states[1 init / 2 lost / 0 skip]
     # save result
-    benchmark_result_path = join('result', param['dataset'])
+    benchmark_result_path = join(config.results_root, param['dataset'])
     tracker_path = join(benchmark_result_path, (param['network_name'] +
                                                 '_scale_step_{:.3f}'.format(param['config'].scale_step) +
                                                 '_scale_penalty_{:.3f}'.format(param['config'].scale_penalty) +
