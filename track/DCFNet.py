@@ -47,7 +47,7 @@ class DCFNet(nn.Module):
         checkpoint = torch.load(path)
         if 'state_dict' in checkpoint.keys():  # from training result
             state_dict = checkpoint['state_dict']
-            if 'module' in state_dict.keys()[0]:  # train with nn.DataParallel
+            if 'module' in next(iter(state_dict.keys())):  # train with nn.DataParallel
                 from collections import OrderedDict
                 new_state_dict = OrderedDict()
                 for k, v in state_dict.items():

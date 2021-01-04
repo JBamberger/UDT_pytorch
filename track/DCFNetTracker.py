@@ -1,18 +1,18 @@
-from os.path import join, isdir
-from os import makedirs
 import argparse
-import json
+import time as time
+from os import makedirs
+from os.path import join, isdir
+
+import cv2
 import numpy as np
 import torch
 
-import cv2
-import time as time
-
+import config as cfg
 from dataset import OtbDataset
+from track.DCFNet import DCFNet
 from track.TrackerConfig import TrackerConfig
+from track.eval_otb import eval_auc
 from util import crop_chw, cxy_wh_2_rect1, rect1_2_cxy_wh, cxy_wh_2_bbox
-from DCFNet import DCFNet
-from eval_otb import eval_auc
 
 
 class DCFNetTracker(object):
@@ -100,7 +100,7 @@ if __name__ == '__main__':
     for video_id, video in enumerate(ds):  # run without resetting
         tic = time.time()
 
-        n_images = len(video.image_files)
+        n_images = len(video)
         target_pos, target_sz = rect1_2_cxy_wh(video.init_rect)  # OTB label is 1-indexed
 
         im = video.frame_at(0)  # HxWxC
@@ -130,6 +130,7 @@ if __name__ == '__main__':
             search = patch_crop - config.net_average_image
             response = net(torch.Tensor(search).cuda())
             peak, idx = torch.max(response.view(config.num_scale, -1), 1)
+            idx = idx.cpu().numpy()
             peak = peak.data.cpu().numpy() * config.scale_penalties
             best_scale = np.argmax(peak)
             r_max, c_max = np.unravel_index(idx[best_scale], config.net_input_size)

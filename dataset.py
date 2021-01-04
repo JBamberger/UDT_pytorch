@@ -164,7 +164,7 @@ class OtbDataset:
             yield OtbVideo(video_key, video_name, image_files, init_rect, gt_rects)
 
     def __len__(self):
-        return len(videos)
+        return len(self.videos)
 
 
 if __name__ == '__main__':
